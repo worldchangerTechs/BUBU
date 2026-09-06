@@ -15,7 +15,10 @@
   "dependencies": {
     "@whiskeysockets/baileys": "latest",
     "chrono-node": "latest",
-    "qrcode-terminal": "latest",
-    "pino": "latest"
+    "dotenv": "^17.4.2",
+    "form-data": "^4.0.6",
+    "node-fetch": "^2.7.0",
+    "pino": "latest",
+    "qrcode-terminal": "latest"
   }
 }

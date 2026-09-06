@@ -1,16 +1,29 @@
+require('dotenv').config();
+
 const { connectWhatsApp } = require('./whatsapp');
 const { handleMessage } = require('./messageHandler');
+const logger = require('./logger');
+
+function startHudWhenConnected() {
+	try {
+		const hud = require('./hud/terminalHud');
+		hud.startHud();
+		hud.setStatus('BUBU ONLINE');
+	} catch (error) {
+		console.warn(`[bubu] HUD unavailable: ${error.message}`);
+	}
+}
 
 async function start() {
-	console.log('[bubu] Starting WhatsApp assistant...');
-	await connectWhatsApp(handleMessage);
+	logger.info('[bubu] Starting WhatsApp assistant...');
+	await connectWhatsApp(handleMessage, startHudWhenConnected);
 }
 
 (async () => {
 	try {
 		await start();
 	} catch (error) {
-		console.error(`[bubu] Startup failed: ${error.message}`);
+		logger.error(`[bubu] Startup failed: ${error.message}`);
 		process.exit(1);
 	}
 })();

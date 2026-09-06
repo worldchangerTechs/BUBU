@@ -23,6 +23,9 @@ function matchCommand(transcript) {
 	if (/\b(next class|next lecture)\b/.test(normalizedTranscript)) {
 		return { command: 'NEXT_CLASS' };
 	}
+	if (/\bread (?:my )?important messages?\b|\bwhat did i miss\b|\bimportant messages?\b/.test(normalizedTranscript)) {
+		return { command: 'READ_IMPORTANT' };
+	}
 	if (/\bread (?:my )?messages?\b|\bread whatsapp\b/.test(normalizedTranscript)) {
 		return { command: 'READ_MESSAGES' };
 	}

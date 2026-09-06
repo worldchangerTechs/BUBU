@@ -5,12 +5,13 @@ const STORE_PATH = path.join(__dirname, '..', 'store.json');
 
 function loadStore() {
 	if (!fs.existsSync(STORE_PATH)) {
-		return { events: [], awayMode: false };
+		return { events: [], digest: [], awayMode: false };
 	}
 
 	const data = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
 	return {
 		events: Array.isArray(data.events) ? data.events : [],
+		digest: Array.isArray(data.digest) ? data.digest : [],
 		awayMode: data.awayMode === true
 	};
 }
@@ -24,6 +25,33 @@ function addEvent(event) {
 	store.events.push(event);
 	saveStore(store);
 	return store.events;
+}
+
+function addDigestItem({ chatName, text, priority, timestamp }) {
+	const store = loadStore();
+	store.digest.push({ chatName, text, priority, timestamp });
+	saveStore(store);
+	return store.digest;
+}
+
+function getDigest() {
+	const priorityOrder = { CLASS: 0, IMPORTANT: 1 };
+
+	return loadStore().digest.sort((first, second) => {
+		const priorityDifference = (priorityOrder[first.priority] ?? Number.MAX_SAFE_INTEGER)
+			- (priorityOrder[second.priority] ?? Number.MAX_SAFE_INTEGER);
+		if (priorityDifference !== 0) {
+			return priorityDifference;
+		}
+
+		return new Date(second.timestamp).getTime() - new Date(first.timestamp).getTime();
+	});
+}
+
+function clearDigest() {
+	const store = loadStore();
+	store.digest = [];
+	saveStore(store);
 }
 
 function getNextEvent() {
@@ -50,6 +78,9 @@ module.exports = {
 	loadStore,
 	saveStore,
 	addEvent,
+	addDigestItem,
+	getDigest,
+	clearDigest,
 	getNextEvent,
 	setAwayMode,
 	isAwayMode

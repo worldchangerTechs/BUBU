@@ -4,3 +4,10 @@ auth_info*/
 *baileys*auth*/
 *.log
 store.json
+.env
+.env.*
+!.env.example
+voice_sample.wav
+bubu-cloud-tts-*.mp3
+tmp-speech/
+tmp/*.mp3

@@ -7,12 +7,9 @@ const {
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const logger = require('./logger');
-const { WATCHED_CHATS, AWAY_AUTO_REPLY_TEXT } = require('./config');
-const { extractEvent } = require('./extractor');
+const { AWAY_AUTO_REPLY_TEXT } = require('./config');
 const store = require('./store');
-const { recordMessage } = require('./messageHandler');
-const { setAlarm } = require('./termux/alarm');
-const { speak } = require('./termux/tts');
+const { handleMessage } = require('./messageHandler');
 
 const AUTH_DIR = path.join(__dirname, '..', 'auth_info');
 let socket;
@@ -41,35 +38,6 @@ async function getChatName(currentSocket, message) {
 	return message.pushName || remoteJid;
 }
 
-function isWatchedChat(chatName) {
-	if (typeof chatName !== 'string') {
-		return false;
-	}
-
-	const normalizedChatName = chatName.toLowerCase();
-	return WATCHED_CHATS.some((watchedChat) =>
-		typeof watchedChat === 'string'
-			&& normalizedChatName.includes(watchedChat.toLowerCase())
-	);
-}
-
-async function handleIncomingMessage(chatName, messageText, senderJid, onMessage) {
-	if (!isWatchedChat(chatName)) {
-		return;
-	}
-
-	logger.info(`[whatsapp] [${chatName}] ${messageText}`);
-	recordMessage(chatName, messageText);
-	const event = extractEvent(messageText);
-	if (event) {
-		store.addEvent(event);
-		await setAlarm(event.date, event.title);
-		await speak(`New alarm set: ${event.title}`);
-	}
-
-	await onMessage(chatName, messageText, senderJid);
-}
-
 async function maybeSendAwayReply(isDirectMessage, senderJid) {
 	if (!isDirectMessage || !senderJid || !store.isAwayMode() || autoRepliedSenders.has(senderJid)) {
 		return;
@@ -83,7 +51,7 @@ async function maybeSendAwayReply(isDirectMessage, senderJid) {
 	}
 }
 
-async function connectWhatsApp(onMessage) {
+async function connectWhatsApp(onMessage, onConnected) {
 	if (typeof onMessage !== 'function') {
 		throw new TypeError('connectWhatsApp requires an onMessage callback.');
 	}
@@ -101,6 +69,7 @@ async function connectWhatsApp(onMessage) {
 
 		if (connection === 'open') {
 			logger.info('[whatsapp] Connected!');
+			onConnected?.();
 		}
 
 		if (connection === 'close') {
@@ -129,7 +98,7 @@ async function connectWhatsApp(onMessage) {
 			const senderJid = message.key.participant || message.key.remoteJid;
 			const isDirectMessage = !message.key.remoteJid?.endsWith('@g.us');
 			await maybeSendAwayReply(isDirectMessage, senderJid);
-			await handleIncomingMessage(chatName, messageText, senderJid, onMessage);
+			await onMessage(chatName, messageText, senderJid);
 		}
 	});
 

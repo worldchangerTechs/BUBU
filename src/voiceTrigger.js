@@ -1,10 +1,11 @@
 const { handleVoiceCommand } = require('./voiceRouter');
+const logger = require('./logger');
 
 (async () => {
 	try {
 		await handleVoiceCommand();
 	} catch (error) {
-		console.error(`[bubu] Voice command failed: ${error.message}`);
+		logger.error(`[bubu] Voice command failed: ${error.message}`);
 		process.exitCode = 1;
 	}
 })();

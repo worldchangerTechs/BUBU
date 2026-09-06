@@ -1,9 +1,13 @@
 const { execFile } = require('node:child_process');
 const logger = require('../logger');
+const { setSpeaking } = require('../hud/terminalHud');
 
 async function speak(text) {
 	return new Promise((resolve, reject) => {
-		execFile('termux-tts-speak', [String(text)], (error) => {
+		setSpeaking(true);
+		try {
+			execFile('termux-tts-speak', [String(text)], (error) => {
+				setSpeaking(false);
 			if (!error) {
 				resolve();
 				return;
@@ -16,7 +20,11 @@ async function speak(text) {
 			}
 
 			reject(new Error(`termux-tts-speak failed: ${error.message}`));
-		});
+			});
+		} catch (error) {
+			setSpeaking(false);
+			reject(error);
+		}
 	});
 }
 

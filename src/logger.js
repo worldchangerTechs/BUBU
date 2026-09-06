@@ -1,6 +1,29 @@
+let terminalHud;
+
+function getTerminalHud() {
+	if (terminalHud !== undefined) {
+		return terminalHud;
+	}
+
+	try {
+		terminalHud = require('./hud/terminalHud');
+	} catch {
+		terminalHud = null;
+	}
+
+	return terminalHud;
+}
+
 function write(level, message) {
 	const timestamp = new Date().toISOString();
-	console[level](`[${timestamp}] ${message}`);
+	const output = `[${timestamp}] ${message}`;
+	const hud = getTerminalHud();
+	if (hud?.isHudActive()) {
+		hud.setStatus(output);
+		return;
+	}
+
+	console[level](output);
 }
 
 module.exports = {
