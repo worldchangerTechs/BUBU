@@ -1,0 +1,21 @@
+{
+  "name": "bubu",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "voice": "node src/voiceTrigger.js",
+    "test:extractor": "node test-extractor.js",
+    "test:voice": "node test-voice.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "chrono-node": "latest",
+    "qrcode-terminal": "latest",
+    "pino": "latest"
+  }
+}

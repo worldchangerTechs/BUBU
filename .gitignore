@@ -1,0 +1,6 @@
+# Ignore dependencies, WhatsApp sessions, logs, and runtime storage
+node_modules/
+auth_info*/
+*baileys*auth*/
+*.log
+store.json
