@@ -51,7 +51,7 @@ async function maybeSendAwayReply(isDirectMessage, senderJid) {
 	}
 }
 
-async function connectWhatsApp(onMessage, onConnected) {
+async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 	if (typeof onMessage !== 'function') {
 		throw new TypeError('connectWhatsApp requires an onMessage callback.');
 	}
@@ -63,7 +63,7 @@ async function connectWhatsApp(onMessage, onConnected) {
 
 	currentSocket.ev.on('creds.update', saveCreds);
 	currentSocket.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-		if (qr) {
+		if (qr && !phoneNumber) {
 			qrcode.generate(qr, { small: true });
 		}
 
@@ -76,12 +76,23 @@ async function connectWhatsApp(onMessage, onConnected) {
 			const statusCode = lastDisconnect?.error?.output?.statusCode
 				?? lastDisconnect?.error?.statusCode;
 			if (statusCode !== DisconnectReason.loggedOut) {
-				connectWhatsApp(onMessage).catch((error) => {
+				connectWhatsApp(onMessage, onConnected, phoneNumber).catch((error) => {
 					logger.error(`[whatsapp] Reconnect failed: ${error.message}`);
 				});
 			}
 		}
 	});
+
+	if (!state.creds.registered && typeof phoneNumber === 'string' && phoneNumber.trim()) {
+		setTimeout(async () => {
+			try {
+				const pairingCode = await currentSocket.requestPairingCode(phoneNumber.trim());
+				console.log(`=== Link WhatsApp with this code: ${pairingCode} ===`);
+			} catch (error) {
+				logger.error(`[whatsapp] Pairing code request failed: ${error.message}`);
+			}
+		}, 1000);
+	}
 
 	currentSocket.ev.on('messages.upsert', async ({ messages, type }) => {
 		if (type !== 'notify') {

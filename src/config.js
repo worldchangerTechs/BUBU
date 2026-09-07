@@ -26,11 +26,15 @@ const IMPORTANT_KEYWORDS = [
 	'reminder'
 ];
 
+// Optional owner phone number for WhatsApp pairing; leave blank to use QR linking.
+const OWNER_PHONE_NUMBER = '';
+
 const AWAY_AUTO_REPLY_TEXT = 'I am currently away and will get back to you soon.';
 
 module.exports = {
 	WATCHED_CHATS,
 	IGNORE_CHAT_PATTERNS,
 	IMPORTANT_KEYWORDS,
+	OWNER_PHONE_NUMBER,
 	AWAY_AUTO_REPLY_TEXT
 };
