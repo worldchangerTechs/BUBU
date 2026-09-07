@@ -4,6 +4,7 @@ const { extractEvent } = require('./extractor');
 const store = require('./store');
 const { setAlarm } = require('./termux/alarm');
 const { speakCloned } = require('./termux/cloudTts');
+const { phrase } = require('./personality');
 
 const MAX_MESSAGES = 10;
 const recentMessages = [];
@@ -61,7 +62,10 @@ async function handleMessage(chatName, text) {
 	if (event) {
 		store.addEvent(event);
 		await setAlarm(event.date, event.title);
-		await speakCloned(`New alarm set: ${event.title}`);
+		await speakCloned(phrase('ALARM_SET', {
+			title: event.title,
+			time: new Date(event.date).toLocaleString()
+		}));
 	}
 }
 

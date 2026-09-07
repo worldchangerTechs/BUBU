@@ -1,6 +1,6 @@
 function matchCommand(transcript) {
 	if (typeof transcript !== 'string') {
-		return { command: 'UNKNOWN' };
+		return { command: 'CHAT', params: { text: transcript } };
 	}
 
 	const normalizedTranscript = transcript
@@ -42,7 +42,7 @@ function matchCommand(transcript) {
 		return { command: 'AWAY_OFF' };
 	}
 
-	return { command: 'UNKNOWN' };
+	return { command: 'CHAT', params: { text: transcript } };
 }
 
 module.exports = { matchCommand };
