@@ -8,6 +8,19 @@ const CHAT_SYSTEM_PROMPT = [
 	'Be funny when it fits, but never at the user\'s expense.'
 ].join(' ');
 
+const AWAY_REPLY_SYSTEM_PROMPT = [
+	'Write one brief, friendly reply to the incoming message.',
+	'Explain that the owner is currently away and will respond later.',
+	'Do not promise a specific time, make commitments, or state facts not provided in the incoming message.',
+	'Keep it warm and natural, with a light touch of humor only when it fits.'
+].join(' ');
+
+const REPLY_DRAFT_SYSTEM_PROMPT = [
+	'Write one short, friendly reply to the supplied message.',
+	'Reply naturally to the message content and do not invent facts, promises, or commitments.',
+	'Return only the reply text, without quotation marks or explanation.'
+].join(' ');
+
 const variants = {
 	ALARM_SET: [
 		({ title, time }) => `${title || 'That event'}, ${time || 'on the calendar'} - locked in! I've got the alarm set.`,
@@ -28,6 +41,16 @@ const variants = {
 		() => 'Nothing important right now - you are all caught up!',
 		() => 'The important-message shelf is empty. Nice and peaceful.',
 		() => 'All clear for now. Nothing important is waiting.'
+	],
+	REPLY_DRAFT: [
+		() => 'Here is a short reply draft for you.',
+		() => 'I drafted something you can send.',
+		() => 'Freshly drafted and ready for your review.'
+	],
+	REPLY_SENT: [
+		() => 'Sent. Nicely handled.',
+		() => 'That reply is on its way.',
+		() => 'Done - your reply has been sent.'
 	],
 	DIGEST_ITEM: [
 		details => digestLine(details, 'plain'),
@@ -82,4 +105,9 @@ function phrase(eventType, details = {}) {
 	return selected(details);
 }
 
-module.exports = { phrase, CHAT_SYSTEM_PROMPT };
+module.exports = {
+	phrase,
+	CHAT_SYSTEM_PROMPT,
+	AWAY_REPLY_SYSTEM_PROMPT,
+	REPLY_DRAFT_SYSTEM_PROMPT
+};

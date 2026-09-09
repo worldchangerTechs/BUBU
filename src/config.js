@@ -31,10 +31,14 @@ const OWNER_PHONE_NUMBER = '';
 
 const AWAY_AUTO_REPLY_TEXT = 'I am currently away and will get back to you soon.';
 
+// Optional away-reply mode: use 'AI' for local LLM replies, or 'STATIC' for the fixed reply.
+const AWAY_REPLY_MODE = 'STATIC';
+
 module.exports = {
 	WATCHED_CHATS,
 	IGNORE_CHAT_PATTERNS,
 	IMPORTANT_KEYWORDS,
 	OWNER_PHONE_NUMBER,
-	AWAY_AUTO_REPLY_TEXT
+	AWAY_AUTO_REPLY_TEXT,
+	AWAY_REPLY_MODE
 };

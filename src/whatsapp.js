@@ -7,7 +7,9 @@ const {
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const logger = require('./logger');
-const { AWAY_AUTO_REPLY_TEXT } = require('./config');
+const { AWAY_AUTO_REPLY_TEXT, AWAY_REPLY_MODE } = require('./config');
+const { AWAY_REPLY_SYSTEM_PROMPT } = require('./personality');
+const { complete } = require('./llmClient');
 const store = require('./store');
 const { handleMessage } = require('./messageHandler');
 
@@ -38,13 +40,22 @@ async function getChatName(currentSocket, message) {
 	return message.pushName || remoteJid;
 }
 
-async function maybeSendAwayReply(isDirectMessage, senderJid) {
+async function maybeSendAwayReply(isDirectMessage, senderJid, messageText) {
 	if (!isDirectMessage || !senderJid || !store.isAwayMode() || autoRepliedSenders.has(senderJid)) {
 		return;
 	}
 
 	try {
-		await sendMessage(senderJid, AWAY_AUTO_REPLY_TEXT);
+		let replyText = AWAY_AUTO_REPLY_TEXT;
+		if (AWAY_REPLY_MODE === 'AI') {
+			try {
+				replyText = await complete(messageText, AWAY_REPLY_SYSTEM_PROMPT);
+			} catch (error) {
+				logger.warn(`[whatsapp] AI away reply unavailable: ${error.message}; using static reply.`);
+			}
+		}
+
+		await sendMessage(senderJid, replyText);
 		autoRepliedSenders.add(senderJid);
 	} catch (error) {
 		logger.error(`[whatsapp] Away reply failed: ${error.message}`);
@@ -108,7 +119,7 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 			const messageText = getMessageText(message.message);
 			const senderJid = message.key.participant || message.key.remoteJid;
 			const isDirectMessage = !message.key.remoteJid?.endsWith('@g.us');
-			await maybeSendAwayReply(isDirectMessage, senderJid);
+			await maybeSendAwayReply(isDirectMessage, senderJid, messageText);
 			await onMessage(chatName, messageText, senderJid);
 		}
 	});

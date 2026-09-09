@@ -9,8 +9,8 @@ const { phrase } = require('./personality');
 const MAX_MESSAGES = 10;
 const recentMessages = [];
 
-function recordMessage(chatName, text) {
-	recentMessages.push({ chatName, text, timestamp: new Date() });
+function recordMessage(chatName, text, senderJid) {
+	recentMessages.push({ chatName, text, senderJid, timestamp: new Date() });
 	if (recentMessages.length > MAX_MESSAGES) {
 		recentMessages.shift();
 	}
@@ -24,7 +24,7 @@ function getRecentMessages(limit = MAX_MESSAGES) {
 	return recentMessages.slice(-requestedLimit);
 }
 
-async function handleMessage(chatName, text) {
+async function handleMessage(chatName, text, senderJid) {
 	const classification = classifyMessage(chatName, text);
 	logger.info(`[message] [${chatName}] ${classification}`);
 
@@ -36,7 +36,7 @@ async function handleMessage(chatName, text) {
 		logger.info(`[whatsapp] [${chatName}] ${text}`);
 	}
 
-	recordMessage(chatName, text);
+	recordMessage(chatName, text, senderJid);
 
 	if (classification === 'IMPORTANT') {
 		store.addDigestItem({

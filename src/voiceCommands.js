@@ -20,6 +20,21 @@ function matchCommand(transcript) {
 		};
 	}
 
+	const replyDraftMatch = normalizedTranscript.match(/^(?:help me|draft a) reply to\s+(.+)$/);
+	if (replyDraftMatch) {
+		return {
+			command: 'REPLY_DRAFT',
+			params: { name: replyDraftMatch[1].trim() }
+		};
+	}
+
+	if (/\b(send it|yes send)\b/.test(normalizedTranscript)) {
+		return { command: 'CONFIRM_SEND' };
+	}
+	if (/^(?:no|cancel|dont send)$/.test(normalizedTranscript)) {
+		return { command: 'CANCEL_SEND' };
+	}
+
 	if (/\b(next class|next lecture)\b/.test(normalizedTranscript)) {
 		return { command: 'NEXT_CLASS' };
 	}

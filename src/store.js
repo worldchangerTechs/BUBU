@@ -5,14 +5,16 @@ const STORE_PATH = path.join(__dirname, '..', 'store.json');
 
 function loadStore() {
 	if (!fs.existsSync(STORE_PATH)) {
-		return { events: [], digest: [], awayMode: false };
+		return { events: [], digest: [], awayMode: false, lastSmsTimestamp: null };
 	}
 
 	const data = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
 	return {
 		events: Array.isArray(data.events) ? data.events : [],
 		digest: Array.isArray(data.digest) ? data.digest : [],
-		awayMode: data.awayMode === true
+		awayMode: data.awayMode === true,
+		lastSmsTimestamp: data.lastSmsTimestamp || null,
+		pendingReply: data.pendingReply || null
 	};
 }
 
@@ -74,6 +76,32 @@ function isAwayMode() {
 	return loadStore().awayMode;
 }
 
+function getLastSmsTimestamp() {
+	return loadStore().lastSmsTimestamp;
+}
+
+function setLastSmsTimestamp(timestamp) {
+	const store = loadStore();
+	store.lastSmsTimestamp = timestamp;
+	saveStore(store);
+}
+
+function setPendingReply({ channel, to, text }) {
+	const store = loadStore();
+	store.pendingReply = { channel, to, text };
+	saveStore(store);
+}
+
+function getPendingReply() {
+	return loadStore().pendingReply;
+}
+
+function clearPendingReply() {
+	const store = loadStore();
+	store.pendingReply = null;
+	saveStore(store);
+}
+
 module.exports = {
 	loadStore,
 	saveStore,
@@ -83,5 +111,10 @@ module.exports = {
 	clearDigest,
 	getNextEvent,
 	setAwayMode,
-	isAwayMode
+	isAwayMode,
+	getLastSmsTimestamp,
+	setLastSmsTimestamp,
+	setPendingReply,
+	getPendingReply,
+	clearPendingReply
 };

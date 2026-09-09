@@ -3,13 +3,81 @@ const { speakCloned } = require('./termux/cloudTts');
 const { listSms, sendSms } = require('./termux/sms');
 const { getMissedCalls } = require('./termux/callLog');
 const { findContact } = require('./termux/contacts');
+const { sendMessage } = require('./whatsapp');
 const store = require('./store');
 const { getRecentMessages } = require('./messageHandler');
 const { matchCommand } = require('./voiceCommands');
-const { phrase, CHAT_SYSTEM_PROMPT } = require('./personality');
+const {
+	phrase,
+	CHAT_SYSTEM_PROMPT,
+	REPLY_DRAFT_SYSTEM_PROMPT
+} = require('./personality');
 const { complete } = require('./llmClient');
 
 const chatHistory = [];
+
+function findWhatsAppMessage(name) {
+	const normalizedName = String(name).toLowerCase();
+	return getRecentMessages()
+		.slice()
+		.reverse()
+		.find((message) => String(message.chatName).toLowerCase().includes(normalizedName));
+}
+
+async function findSmsMessage(name) {
+	const normalizedName = String(name).toLowerCase();
+	const messages = await listSms(10);
+	return messages
+		.slice()
+		.sort((first, second) => new Date(second.date) - new Date(first.date))
+		.find((message) => String(message.from).toLowerCase().includes(normalizedName));
+}
+
+async function draftReply(name) {
+	const whatsappMessage = findWhatsAppMessage(name);
+	let source = whatsappMessage;
+	let channel = 'whatsapp';
+	if (!source) {
+		source = await findSmsMessage(name);
+		channel = 'sms';
+	}
+
+	if (!source) {
+		await speakCloned(phrase('CONTACT_NOT_FOUND', { name }));
+		return;
+	}
+
+	const draft = await complete(`Message from ${name}: ${source.text || source.body}`, REPLY_DRAFT_SYSTEM_PROMPT);
+	const recipient = channel === 'whatsapp' ? source.senderJid || source.chatName : source.from;
+	store.setPendingReply({ channel, to: recipient, text: draft });
+	await speakCloned(`${phrase('REPLY_DRAFT')} ${draft}`);
+}
+
+async function confirmPendingReply() {
+	const pendingReply = store.getPendingReply();
+	if (!pendingReply) {
+		await speakCloned("There's nothing to send");
+		return;
+	}
+
+	if (pendingReply.channel === 'whatsapp') {
+		await sendMessage(pendingReply.to, pendingReply.text);
+	} else {
+		await sendSms(pendingReply.to, pendingReply.text);
+	}
+	store.clearPendingReply();
+	await speakCloned(phrase('REPLY_SENT'));
+}
+
+async function cancelPendingReply() {
+	if (!store.getPendingReply()) {
+		await speakCloned("There's nothing to send");
+		return;
+	}
+
+	await speakCloned('Okay, not sending that');
+	store.clearPendingReply();
+}
 
 async function speakChatResponse(text) {
 	const userText = String(text ?? '').trim();
@@ -119,6 +187,26 @@ async function handleVoiceCommand() {
 			await speakCloned(phrase('DIGEST_ITEM', { kind: 'sent', name: contact.name }));
 			return;
 		}
+
+		case 'REPLY_DRAFT':
+			try {
+				await draftReply(params?.name);
+			} catch (error) {
+				await speakCloned(`I could not draft that reply. ${error.message}`);
+			}
+			return;
+
+		case 'CONFIRM_SEND':
+			try {
+				await confirmPendingReply();
+			} catch (error) {
+				await speakCloned(`I could not send that reply. ${error.message}`);
+			}
+			return;
+
+		case 'CANCEL_SEND':
+			await cancelPendingReply();
+			return;
 
 		case 'CHAT':
 			await speakChatResponse(params?.text);
