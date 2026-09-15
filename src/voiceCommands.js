@@ -56,6 +56,29 @@ function matchCommand(transcript) {
 	if (/\baway mode off\b|\bim back\b/.test(normalizedTranscript)) {
 		return { command: 'AWAY_OFF' };
 	}
+	if (/\b(whats the time|what time is it|tell me the time|current time|time is it)\b/.test(normalizedTranscript)) {
+		return { command: 'TELL_TIME' };
+	}
+	if (/\b(play me something|play music|put on a song|play a song|play some music)\b/.test(normalizedTranscript)) {
+		return { command: 'PLAY_MUSIC' };
+	}
+
+	const googleMatch = normalizedTranscript.match(/^(?:google search for|search google for|look up|search for|google)\s+(.+)$/);
+	if (googleMatch) {
+		const query = googleMatch[1].trim();
+		if (query) {
+			return { command: 'GOOGLE_SEARCH', params: { query } };
+		}
+	}
+
+	const payMatch = normalizedTranscript.match(/^pay\s+([\d][\d\s,]*)\s+to\s+(\+?[\d][\d\s+\-]*)$/);
+	if (payMatch) {
+		const amount = payMatch[1].replace(/[\s,]/g, '');
+		const number = payMatch[2].replace(/[\s\-]/g, '');
+		if (amount && number) {
+			return { command: 'PAY_MPESA', params: { amount, number } };
+		}
+	}
 
 	return { command: 'CHAT', params: { text: transcript } };
 }

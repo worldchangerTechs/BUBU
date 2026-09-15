@@ -8,12 +8,15 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "up": "node scripts/bubu-up.js",
+    "up:bot-only": "SKIP_LLM=1 node scripts/bubu-up.js",
     "voice": "node src/voiceTrigger.js",
+    "bubu": "node src/voiceTrigger.js",
     "test:extractor": "node test-extractor.js",
     "test:voice": "node test-voice.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "latest",
+    "@whiskeysockets/baileys": "6.7.24",
     "chrono-node": "latest",
     "dotenv": "^17.4.2",
     "form-data": "^4.0.6",

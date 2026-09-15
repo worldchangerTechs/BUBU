@@ -27,7 +27,9 @@ const IMPORTANT_KEYWORDS = [
 ];
 
 // Optional owner phone number for WhatsApp pairing; leave blank to use QR linking.
-const OWNER_PHONE_NUMBER = '';
+// Env override wins so Termux setups can keep the number out of git:
+//   BUBU_OWNER_PHONE=+2547XXXXXXXX node src/index.js
+const OWNER_PHONE_NUMBER = process.env.BUBU_OWNER_PHONE || '';
 
 const AWAY_AUTO_REPLY_TEXT = 'I am currently away and will get back to you soon.';
 

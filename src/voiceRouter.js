@@ -1,4 +1,5 @@
 const { listen } = require('./termux/speechToText');
+const { execFile } = require('node:child_process');
 const { speakCloned } = require('./termux/cloudTts');
 const { listSms, sendSms } = require('./termux/sms');
 const { getMissedCalls } = require('./termux/callLog');
@@ -13,6 +14,8 @@ const {
 	REPLY_DRAFT_SYSTEM_PROMPT
 } = require('./personality');
 const { complete } = require('./llmClient');
+const { playForMood } = require('./moodMusic');
+const { searchGoogle } = require('./termux/appLauncher');
 
 const chatHistory = [];
 
@@ -102,8 +105,50 @@ async function speakChatResponse(text) {
 	}
 }
 
-async function handleVoiceCommand() {
-	const transcript = await listen();
+async function handlePlayMusic() {
+	await speakCloned(phrase('MUSIC_ASK_MOOD'));
+	const moodText = await listen();
+	if (!String(moodText || '').trim()) {
+		await speakCloned(phrase('MUSIC_MISSED_MOOD'));
+		return;
+	}
+	const result = await playForMood(moodText);
+	if (result?.source === 'local') {
+		await speakCloned(phrase('MUSIC_LOCAL'));
+		return;
+	}
+	await speakCloned(phrase('MUSIC_YOUTUBE'));
+}
+
+async function handlePayMpesa(amount, number) {
+	// Safety check: speak back exactly what was heard so a misheard digit
+	// gets caught before anything happens. Nothing is auto-typed or auto-dialed.
+	await speakCloned(phrase('MPESA_CONFIRM', { amount, number }));
+	const confirmation = String(await listen() || '').toLowerCase().trim();
+	if (!/^(yes|yeah|yep|correct|right|confirm|sawa|ndio|eee|eh)$/.test(confirmation)
+		&& !/\b(yes|yeah|yep|correct|thats right|that is right|confirm|sawa|ndio)\b/.test(confirmation)) {
+		await speakCloned(phrase('MPESA_CANCELLED'));
+		return;
+	}
+	// Open the dialer pre-loaded with the M-Pesa menu shortcut.
+	// ACTION_CALL with a tel: URI only opens the dialer here — it does NOT
+	// place the call or type the amount/recipient; the user enters amount,
+	// number, and PIN by hand. %23 is the URL-encoded '#'.
+	await new Promise((resolve, reject) => {
+		execFile('am', ['start', '-a', 'android.intent.action.CALL', '-d', 'tel:*334%23'], (error) => {
+			if (error) {
+				reject(new Error(error.code === 'ENOENT'
+					? 'am is unavailable on this device.'
+					: `Could not open the dialer: ${error.message}`));
+				return;
+			}
+			resolve();
+		});
+	});
+	await speakCloned(phrase('MPESA_OPEN'));
+}
+
+async function handleCommand(transcript) {
 	const { command, params } = matchCommand(transcript);
 
 	switch (command) {
@@ -208,6 +253,47 @@ async function handleVoiceCommand() {
 			await cancelPendingReply();
 			return;
 
+		case 'TELL_TIME': {
+			const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			await speakCloned(phrase('TELL_TIME', { time }));
+			return;
+		}
+
+		case 'PLAY_MUSIC':
+			await handlePlayMusic();
+			return;
+
+		case 'GOOGLE_SEARCH': {
+			const query = String(params?.query ?? '').trim();
+			if (!query) {
+				await speakCloned(phrase('UNKNOWN_COMMAND'));
+				return;
+			}
+			try {
+				await searchGoogle(query);
+			} catch (error) {
+				await speakCloned(`I could not open that search. ${error.message}`);
+				return;
+			}
+			await speakCloned(phrase('GOOGLE_SEARCH', { query }));
+			return;
+		}
+
+		case 'PAY_MPESA': {
+			const amount = String(params?.amount ?? '').trim();
+			const number = String(params?.number ?? '').trim();
+			if (!amount || !number) {
+				await speakCloned(phrase('UNKNOWN_COMMAND'));
+				return;
+			}
+			try {
+				await handlePayMpesa(amount, number);
+			} catch (error) {
+				await speakCloned(`I could not open M-Pesa. ${error.message}`);
+			}
+			return;
+		}
+
 		case 'CHAT':
 			await speakChatResponse(params?.text);
 			return;
@@ -217,4 +303,13 @@ async function handleVoiceCommand() {
 	}
 }
 
-module.exports = { handleVoiceCommand };
+async function handleVoiceCommand() {
+	const transcript = await listen();
+	return handleCommand(transcript);
+}
+
+async function handleTextCommand(text) {
+	return handleCommand(text);
+}
+
+module.exports = { handleCommand, handleVoiceCommand, handleTextCommand };

@@ -66,6 +66,51 @@ const variants = {
 		() => 'I did not quite catch that. Try saying it another way and I am with you.',
 		() => 'That command slipped past me. Give me another try.',
 		() => 'I am not sure what you meant yet, but I am ready for a rerun.'
+	],
+	TELL_TIME: [
+		({ time }) => `It's ${time || 'time to check the clock'} right now.`,
+		({ time }) => `The time is ${time || 'on the clock'}.`,
+		({ time }) => `Right now it's ${time || 'about that time'}.`
+	],
+	MUSIC_ASK_MOOD: [
+		() => 'What mood are you in?',
+		() => 'Tell me the vibe — what mood are you in?',
+		() => 'What kind of mood should I play for?'
+	],
+	MUSIC_MISSED_MOOD: [
+		() => "Didn't catch that — try again",
+		() => 'I did not hear a mood — try again?',
+		() => 'Hmm, missed that — tell me the mood again?'
+	],
+	MUSIC_LOCAL: [
+		() => 'Playing something from your library',
+		() => 'Found a match in your library — playing it now.',
+		() => 'Pulling a track from your own collection.'
+	],
+	MUSIC_YOUTUBE: [
+		() => 'Opening something on YouTube for that mood',
+		() => 'Nothing local matched, so opening a YouTube mix for that mood.',
+		() => 'Heading to YouTube to find that vibe for you.'
+	],
+	GOOGLE_SEARCH: [
+		() => "Here's what I found for that",
+		({ query }) => `Here's what I found for ${query || 'that'}.`,
+		() => 'Pulled that up on Google for you.'
+	],
+	MPESA_CONFIRM: [
+		({ amount, number }) => `You said pay ${amount || 'that amount'} shillings to ${number || 'that number'}. Is that right?`,
+		({ amount, number }) => `Just to double-check: pay ${amount || 'that amount'} shillings to ${number || 'that number'} — correct?`,
+		({ amount, number }) => `I heard pay ${amount || 'that amount'} shillings to ${number || 'that number'}. Is that right?`
+	],
+	MPESA_OPEN: [
+		() => 'Opening M-Pesa — go ahead and enter the amount, number, and your PIN',
+		() => 'M-Pesa menu coming up — enter the amount, number, and your PIN by hand.',
+		() => 'Opening the M-Pesa menu for you — you take it from there with amount, number, and PIN.'
+	],
+	MPESA_CANCELLED: [
+		() => 'Okay, cancelled',
+		() => 'No problem — cancelled, nothing opened.',
+		() => 'Got it, cancelled. Let me know if you want to try again.'
 	]
 };
 

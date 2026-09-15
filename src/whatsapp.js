@@ -3,7 +3,9 @@ const path = require('node:path');
 const {
 	default: makeWASocket,
 	useMultiFileAuthState,
-	DisconnectReason
+	DisconnectReason,
+	Browsers,
+	fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const logger = require('./logger');
@@ -16,7 +18,36 @@ const { handleMessage } = require('./messageHandler');
 const AUTH_DIR = path.join(__dirname, '..', 'auth_info');
 let socket;
 let pairingRequested = false;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY_MS = 60000;
 const autoRepliedSenders = new Set();
+
+function normalizePhoneNumber(phoneNumber) {
+	return String(phoneNumber || '').replace(/\D/g, '');
+}
+
+function clearReconnectTimer() {
+	if (reconnectTimer) {
+		clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	}
+}
+
+function scheduleReconnect(onMessage, onConnected, phoneNumber, baseDelayMs) {
+	if (reconnectTimer) {
+		return;
+	}
+	reconnectAttempts += 1;
+	const delayMs = Math.min(baseDelayMs * reconnectAttempts, MAX_RECONNECT_DELAY_MS);
+	logger.info(`[whatsapp] Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})...`);
+	reconnectTimer = setTimeout(() => {
+		reconnectTimer = null;
+		connectWhatsApp(onMessage, onConnected, phoneNumber).catch((error) => {
+			logger.error(`[whatsapp] Reconnect failed: ${error.message}`);
+		});
+	}, delayMs);
+}
 
 function getMessageText(message) {
 	return message?.conversation
@@ -70,7 +101,21 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 
 	fs.mkdirSync(AUTH_DIR, { recursive: true });
 	const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-	const sock = makeWASocket({ auth: state });
+	clearReconnectTimer();
+	let version;
+	try {
+		({ version } = await fetchLatestBaileysVersion());
+	} catch (error) {
+		logger.warn(`[whatsapp] Could not fetch latest WhatsApp Web version, using bundled defaults: ${error.message}`);
+	}
+	const sock = makeWASocket({
+		auth: state,
+		...(version ? { version } : {}),
+		browser: Browsers.ubuntu('Chrome'),
+		printQRInTerminal: false,
+		syncFullHistory: false,
+		markOnlineOnConnect: false
+	});
 	socket = sock;
 	let hasOpened = false;
 
@@ -82,12 +127,18 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 
 		if (connection === 'open') {
 			hasOpened = true;
+			reconnectAttempts = 0;
 			logger.info('[whatsapp] Connected!');
 			onConnected?.();
 		}
 
 		if (connection === 'close') {
 			logger.error(`[whatsapp] Connection closed: ${lastDisconnect?.error?.message || lastDisconnect?.error}`);
+			try {
+				sock.end(undefined);
+			} catch {
+				// Socket is already closed; nothing to clean up.
+			}
 			const statusCode = lastDisconnect?.error?.output?.statusCode
 				?? lastDisconnect?.error?.statusCode;
 			if (statusCode === DisconnectReason.loggedOut) {
@@ -95,24 +146,19 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 			}
 			if (pairingRequested && !hasOpened) {
 				logger.info('[whatsapp] Waiting for the pairing code to be entered...');
-				setTimeout(() => {
-					connectWhatsApp(onMessage, onConnected, phoneNumber).catch((error) => {
-						logger.error(`[whatsapp] Reconnect failed: ${error.message}`);
-					});
-				}, 25000);
+				scheduleReconnect(onMessage, onConnected, phoneNumber, 25000);
 				return;
 			}
-			connectWhatsApp(onMessage, onConnected, phoneNumber).catch((error) => {
-				logger.error(`[whatsapp] Reconnect failed: ${error.message}`);
-			});
+			scheduleReconnect(onMessage, onConnected, phoneNumber, 5000);
 		}
 	});
 
-	if (typeof phoneNumber === 'string' && phoneNumber.trim()) {
+	const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
+	if (normalizedPhoneNumber) {
 		setTimeout(async () => {
 			if (!pairingRequested && !sock.authState.creds.registered) {
 				try {
-					const pairingCodePromise = sock.requestPairingCode(phoneNumber.trim());
+					const pairingCodePromise = sock.requestPairingCode(normalizedPhoneNumber);
 					pairingRequested = true;
 					const pairingCode = await pairingCodePromise;
 					console.log(`=== Link WhatsApp with this code: ${pairingCode} ===`);
