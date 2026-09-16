@@ -20,6 +20,15 @@ function matchCommand(transcript) {
 		};
 	}
 
+	const sendWhatsappMatch = normalizedTranscript.match(/^(?:whatsapp\s+(.+?)\s+saying\s+(.+)|send a whatsapp to\s+(.+?)\s+saying\s+(.+))$/);
+	if (sendWhatsappMatch) {
+		const name = (sendWhatsappMatch[1] || sendWhatsappMatch[3] || '').trim();
+		const message = (sendWhatsappMatch[2] || sendWhatsappMatch[4] || '').trim();
+		if (name && message) {
+			return { command: 'SEND_WHATSAPP', params: { name, message } };
+		}
+	}
+
 	const replyDraftMatch = normalizedTranscript.match(/^(?:help me|draft a) reply to\s+(.+)$/);
 	if (replyDraftMatch) {
 		return {
@@ -35,8 +44,26 @@ function matchCommand(transcript) {
 		return { command: 'CANCEL_SEND' };
 	}
 
+	if (/^(?:hello|hi|hey)(?:\s+bubu)?$/.test(normalizedTranscript)
+		|| /^(?:hello bubu|hi bubu|hey bubu|ok bubu|hey booboo)$/.test(normalizedTranscript)) {
+		return { command: 'WAKE' };
+	}
+
+	if (/^(?:stop|thats all|that is all|done|goodbye|bye)\b/.test(normalizedTranscript)) {
+		return { command: 'STOP_SESSION' };
+	}
+	if (/\b(stop listening|mic off|go to sleep)\b/.test(normalizedTranscript)) {
+		return { command: 'STOP_LISTENING' };
+	}
+	if (/\b(wake up|mic on)\b/.test(normalizedTranscript)) {
+		return { command: 'START_LISTENING' };
+	}
+
 	if (/\b(next class|next lecture)\b/.test(normalizedTranscript)) {
 		return { command: 'NEXT_CLASS' };
+	}
+	if (/\b(is there a class|any class today|class update|do i have class)\b/.test(normalizedTranscript)) {
+		return { command: 'CLASS_STATUS' };
 	}
 	if (/\bread (?:my )?important messages?\b|\bwhat did i miss\b|\bimportant messages?\b/.test(normalizedTranscript)) {
 		return { command: 'READ_IMPORTANT' };
@@ -77,6 +104,23 @@ function matchCommand(transcript) {
 		const number = payMatch[2].replace(/[\s\-]/g, '');
 		if (amount && number) {
 			return { command: 'PAY_MPESA', params: { amount, number } };
+		}
+	}
+
+	const teachMatch = normalizedTranscript.match(/^(?:remember that\s+(.+?)\s+is important|bubu learn\s+(.+)|learn\s+(.+))$/);
+	if (teachMatch) {
+		const fact = (teachMatch[1] || teachMatch[2] || teachMatch[3] || '').trim();
+		if (fact) {
+			return { command: 'TEACH', params: { fact } };
+		}
+	}
+
+	const callMatch = normalizedTranscript.match(/^(?:call|phone|ring|dial)\s+(.+)$/);
+	if (callMatch) {
+		const name = callMatch[1].trim();
+		// Guard against "call it off"-style false positives and empty names.
+		if (name && !/^(it|that|this|them|him|her|me|back)\s+off\b/.test(name)) {
+			return { command: 'CALL_CONTACT', params: { name } };
 		}
 	}
 

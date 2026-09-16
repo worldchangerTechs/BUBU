@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const { connectWhatsApp } = require('./whatsapp');
 const { handleMessage } = require('./messageHandler');
-const { handleTextCommand } = require('./voiceRouter');
+const { handleTextCommand, startListeningLoop } = require('./voiceRouter');
 const readline = require('node:readline');
 const logger = require('./logger');
 const { OWNER_PHONE_NUMBER, AWAY_REPLY_MODE } = require('./config');
@@ -18,7 +18,8 @@ function startHudWhenConnected() {
 	try {
 		const hud = require('./hud/terminalHud');
 		hud.startHud();
-		hud.setStatus('BUBU ONLINE');
+		hud.setStatus('LISTENING');
+		startListeningLoop();
 	} catch (error) {
 		console.warn(`[bubu] HUD unavailable: ${error.message}`);
 	}

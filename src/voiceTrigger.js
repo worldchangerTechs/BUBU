@@ -1,8 +1,10 @@
 const { handleVoiceCommand, handleTextCommand } = require('./voiceRouter');
 const logger = require('./logger');
 
-// Text mode: `node src/voiceTrigger.js "read my messages"` or piped stdin.
-// Voice mode (default): `node src/voiceTrigger.js` listens via Termux:API.
+// Widget tap = one WAKE session: greet once, then keep listening for
+// follow-up commands in the SAME session until "stop"/"that's all"/"done"
+// or ~15s of silence. Text mode still runs single commands:
+// `node src/voiceTrigger.js "read my messages"` or piped stdin.
 function readStdin() {
 	return new Promise((resolve) => {
 		if (process.stdin.isTTY) {

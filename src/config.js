@@ -1,8 +1,11 @@
 // Edit this file to configure the chats Bubu monitors and its away reply.
 const WATCHED_CHATS = [
+	'KSU IT WARRIORS COMMUNS GROUP (4.1)',
 	// 'Example Study Group',
 	// 'Example Family Chat'
 ];
+
+const PRIORITY_SENDERS = ['baraka2024'];
 
 // User-editable keywords for chats to always ignore.
 const IGNORE_CHAT_PATTERNS = [
@@ -27,17 +30,16 @@ const IMPORTANT_KEYWORDS = [
 ];
 
 // Optional owner phone number for WhatsApp pairing; leave blank to use QR linking.
-// Env override wins so Termux setups can keep the number out of git:
-//   BUBU_OWNER_PHONE=+2547XXXXXXXX node src/index.js
-const OWNER_PHONE_NUMBER = process.env.BUBU_OWNER_PHONE || '';
+const OWNER_PHONE_NUMBER = '';
 
 const AWAY_AUTO_REPLY_TEXT = 'I am currently away and will get back to you soon.';
 
 // Optional away-reply mode: use 'AI' for local LLM replies, or 'STATIC' for the fixed reply.
-const AWAY_REPLY_MODE = 'STATIC';
+const AWAY_REPLY_MODE = 'AI';
 
 module.exports = {
 	WATCHED_CHATS,
+	PRIORITY_SENDERS,
 	IGNORE_CHAT_PATTERNS,
 	IMPORTANT_KEYWORDS,
 	OWNER_PHONE_NUMBER,

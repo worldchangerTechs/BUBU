@@ -1,23 +1,151 @@
 const { listen } = require('./termux/speechToText');
 const { execFile } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { speakCloned } = require('./termux/cloudTts');
 const { listSms, sendSms } = require('./termux/sms');
 const { getMissedCalls } = require('./termux/callLog');
 const { findContact } = require('./termux/contacts');
-const { sendMessage } = require('./whatsapp');
+const { sendMessage, toWhatsAppJid } = require('./whatsapp');
 const store = require('./store');
 const { getRecentMessages } = require('./messageHandler');
 const { matchCommand } = require('./voiceCommands');
 const {
 	phrase,
 	CHAT_SYSTEM_PROMPT,
-	REPLY_DRAFT_SYSTEM_PROMPT
+	REPLY_DRAFT_SYSTEM_PROMPT,
+	isTimeSensitive
 } = require('./personality');
 const { complete } = require('./llmClient');
+const { search } = require('./webSearch');
 const { playForMood } = require('./moodMusic');
-const { searchGoogle } = require('./termux/appLauncher');
+const { searchGoogle, callContact } = require('./termux/appLauncher');
+const { setStatus } = require('./hud/terminalHud');
 
 const chatHistory = [];
+let isListening = false;
+let listeningLoopPromise = null;
+const UNIVERSAL_FALLBACK = "I'm sorry sir, but that is not possible for now.";
+const LISTENING_STATE_PATH = path.join(os.tmpdir(), 'bubu-listening.state');
+const LISTEN_RETRY_DELAY_MS = 1000;
+
+// Idle cutoff for a wake session: ~15s of silence (no speech detected)
+// ends the loop so the mic isn't held open draining battery.
+const SESSION_SILENCE_LIMIT_MS = 15000;
+
+async function handleWakeSession(firstTranscript) {
+	await speakCloned(phrase('WAKE'));
+	let pendingTranscript = firstTranscript;
+	let lastSpeechAt = Date.now();
+	for (;;) {
+		// ~15s of silence ends the session so the mic isn't held open.
+		if (Date.now() - lastSpeechAt >= SESSION_SILENCE_LIMIT_MS && pendingTranscript === undefined) {
+			return;
+		}
+		let transcript = pendingTranscript;
+		pendingTranscript = undefined;
+		if (transcript === undefined) {
+			const remainingMs = SESSION_SILENCE_LIMIT_MS - (Date.now() - lastSpeechAt);
+			try {
+				transcript = await listenWithTimeout(Math.max(1000, remainingMs));
+			} catch (error) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				return;
+			}
+		}
+		if (!String(transcript ?? '').trim()) {
+			continue;
+		}
+		lastSpeechAt = Date.now();
+		const { command } = matchCommand(transcript);
+		if (command === 'STOP_SESSION' || command === 'CANCEL_SEND') {
+			await speakCloned(phrase('SESSION_SIGNOFF'));
+			return;
+		}
+		if (command === 'WAKE') {
+			await speakCloned(phrase('WAKE'));
+			continue;
+		}
+		await handleCommand(transcript);
+	}
+}
+
+async function startListeningLoop() {
+	if (listeningLoopPromise) {
+		isListening = true;
+		setListeningState(true);
+		setStatus('LISTENING');
+		return listeningLoopPromise;
+	}
+
+	isListening = true;
+	setListeningState(true);
+	setStatus('LISTENING');
+	// Android only permits continuous microphone access while Termux is foreground
+	// or holds termux-wake-lock; this is an OS restriction, not code we can override.
+	listeningLoopPromise = (async () => {
+		while (true) {
+			if (!isListening) {
+				if (readListeningState()) {
+					isListening = true;
+					setStatus('LISTENING');
+					continue;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				continue;
+			}
+			try {
+				const transcript = await listen();
+				if (String(transcript ?? '').trim()) {
+					await handleCommand(transcript);
+				} else {
+					await new Promise((resolve) => setTimeout(resolve, LISTEN_RETRY_DELAY_MS));
+				}
+			} catch (error) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				await new Promise((resolve) => setTimeout(resolve, LISTEN_RETRY_DELAY_MS));
+			}
+			if (!readListeningState()) {
+				isListening = false;
+				setStatus('PAUSED');
+			}
+		}
+	})().finally(() => {
+		listeningLoopPromise = null;
+		setStatus('PAUSED');
+	});
+	return listeningLoopPromise;
+}
+
+function stopListening() {
+	isListening = false;
+	setListeningState(false);
+	setStatus('PAUSED');
+}
+
+function setListeningState(value) {
+	try {
+		fs.writeFileSync(LISTENING_STATE_PATH, value ? 'LISTENING\n' : 'PAUSED\n', 'utf8');
+	} catch {
+		// In-memory state still works when the temporary directory is unavailable.
+	}
+}
+
+function readListeningState() {
+	try {
+		return fs.readFileSync(LISTENING_STATE_PATH, 'utf8').trim() !== 'PAUSED';
+	} catch {
+		return true;
+	}
+}
+
+function listenWithTimeout(timeoutMs) {
+	return Promise.race([
+		listen(),
+		new Promise((resolve) => setTimeout(() => resolve(''), timeoutMs))
+	]);
+}
 
 function findWhatsAppMessage(name) {
 	const normalizedName = String(name).toLowerCase();
@@ -89,9 +217,28 @@ async function speakChatResponse(text) {
 		return;
 	}
 
+	let promptUserText = userText;
+	if (isTimeSensitive(userText)) {
+		const results = await search(userText);
+		if (results.length > 0) {
+			const searchContext = results
+				.slice(0, 3)
+				.map((result, index) => `${index + 1}. ${result.title}\n${result.snippet}`)
+				.join('\n');
+			promptUserText = [
+				`Original question: ${userText}`,
+				'Search results:',
+				searchContext,
+				'Answer using only the information in the search results. If it is insufficient, say so clearly.'
+			].join('\n');
+		} else {
+			promptUserText = `${userText}\n\nThis answer might not be current. Say so if you are uncertain.`;
+		}
+	}
+
 	const prompt = [
 		...chatHistory.map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}`),
-		`User: ${userText}`,
+		`User: ${promptUserText}`,
 		'Assistant:'
 	].join('\n');
 
@@ -101,7 +248,7 @@ async function speakChatResponse(text) {
 		chatHistory.splice(0, Math.max(0, chatHistory.length - 8));
 		await speakCloned(reply);
 	} catch (error) {
-		await speakCloned(`I could not reach my local conversation model. ${error.message}`);
+		await speakCloned(UNIVERSAL_FALLBACK);
 	}
 }
 
@@ -148,10 +295,76 @@ async function handlePayMpesa(amount, number) {
 	await speakCloned(phrase('MPESA_OPEN'));
 }
 
-async function handleCommand(transcript) {
+async function handleTeach(fact) {
+	const text = String(fact ?? '').trim();
+	if (!text) {
+		await speakCloned(UNIVERSAL_FALLBACK);
+		return;
+	}
+	// Explicit keyword-importance rule only: "X is important" teaches X.
+	// Anything else is stored as a plain fact so nothing is inferred.
+	const ruleMatch = text.match(/^(.+?)\s+is important$/i);
+	const keyword = (ruleMatch ? ruleMatch[1] : text).toLowerCase().trim();
+	if (keyword) {
+		store.learnImportantWord(keyword);
+	}
+	await speakCloned(phrase('TEACH_SAVED', { fact: text }));
+}
+
+async function handleCallContact(name) {
+	const query = String(name ?? '').trim();
+	if (!query) {
+		await speakCloned(UNIVERSAL_FALLBACK);
+		return;
+	}
+	let contact;
+	try {
+		contact = await findContact(query);
+	} catch (error) {
+		await speakCloned(UNIVERSAL_FALLBACK);
+		return;
+	}
+	if (!contact?.number) {
+		await speakCloned("I couldn't find a contact matching that name");
+		return;
+	}
+	// Misheard-name guard: ACTION.CALL dials with NO confirmation screen,
+	// so announce the resolved name and give ~2s to say "cancel" first.
+	await speakCloned(phrase('CALL_ANNOUNCE', { name: contact.name }));
+	let objection = '';
+	try {
+		objection = await listenWithTimeout(2000);
+	} catch {
+		objection = '';
+	}
+	if (/\bcancel\b|\bstop\b|\bno\b|\bdont\b/.test(String(objection).toLowerCase())) {
+		await speakCloned(phrase('CALL_CANCELLED'));
+		return;
+	}
+	try {
+		await callContact(contact.number);
+	} catch (error) {
+		await speakCloned(UNIVERSAL_FALLBACK);
+	}
+}
+
+async function executeCommand(transcript) {
 	const { command, params } = matchCommand(transcript);
 
 	switch (command) {
+		case 'STOP_LISTENING':
+			stopListening();
+			await speakCloned('Listening paused, sir.');
+			return;
+
+		case 'START_LISTENING':
+			await speakCloned('Listening resumed, sir.');
+			if (listeningLoopPromise) {
+				startListeningLoop();
+			} else {
+				setListeningState(true);
+			}
+			return;
 		case 'NEXT_CLASS': {
 			const event = store.getNextEvent();
 			if (!event) {
@@ -164,6 +377,19 @@ async function handleCommand(transcript) {
 				kind: 'nextClass',
 				title: event.title,
 				time: eventDate.toLocaleString()
+			}));
+			return;
+		}
+
+		case 'CLASS_STATUS': {
+			const classStatus = store.getClassStatus();
+			if (!classStatus?.hasClass) {
+				await speakCloned(phrase('CLASS_STATUS_EMPTY'));
+				return;
+			}
+			await speakCloned(phrase('CLASS_STATUS', {
+				title: classStatus.title,
+				time: new Date(classStatus.time).toLocaleString()
 			}));
 			return;
 		}
@@ -233,11 +459,40 @@ async function handleCommand(transcript) {
 			return;
 		}
 
+		case 'SEND_WHATSAPP': {
+			const name = String(params?.name ?? '').trim();
+			const message = String(params?.message ?? '').trim();
+			if (!name || !message) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				return;
+			}
+			let contact;
+			try {
+				contact = await findContact(name);
+			} catch (error) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				return;
+			}
+			if (!contact?.number) {
+				await speakCloned("I couldn't find a contact matching that name");
+				return;
+			}
+			// First message to a new JID works like any other via Baileys.
+			try {
+				await sendMessage(toWhatsAppJid(contact.number), message);
+			} catch (error) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				return;
+			}
+			await speakCloned(phrase('WHATSAPP_SENT', { name: contact.name }));
+			return;
+		}
+
 		case 'REPLY_DRAFT':
 			try {
 				await draftReply(params?.name);
 			} catch (error) {
-				await speakCloned(`I could not draft that reply. ${error.message}`);
+				await speakCloned(UNIVERSAL_FALLBACK);
 			}
 			return;
 
@@ -245,12 +500,20 @@ async function handleCommand(transcript) {
 			try {
 				await confirmPendingReply();
 			} catch (error) {
-				await speakCloned(`I could not send that reply. ${error.message}`);
+				await speakCloned(UNIVERSAL_FALLBACK);
 			}
 			return;
 
 		case 'CANCEL_SEND':
 			await cancelPendingReply();
+			return;
+
+		case 'WAKE':
+			await handleWakeSession();
+			return;
+
+		case 'STOP_SESSION':
+			await speakCloned(phrase('SESSION_SIGNOFF'));
 			return;
 
 		case 'TELL_TIME': {
@@ -266,13 +529,13 @@ async function handleCommand(transcript) {
 		case 'GOOGLE_SEARCH': {
 			const query = String(params?.query ?? '').trim();
 			if (!query) {
-				await speakCloned(phrase('UNKNOWN_COMMAND'));
+				await speakCloned(UNIVERSAL_FALLBACK);
 				return;
 			}
 			try {
 				await searchGoogle(query);
 			} catch (error) {
-				await speakCloned(`I could not open that search. ${error.message}`);
+				await speakCloned(UNIVERSAL_FALLBACK);
 				return;
 			}
 			await speakCloned(phrase('GOOGLE_SEARCH', { query }));
@@ -283,14 +546,34 @@ async function handleCommand(transcript) {
 			const amount = String(params?.amount ?? '').trim();
 			const number = String(params?.number ?? '').trim();
 			if (!amount || !number) {
-				await speakCloned(phrase('UNKNOWN_COMMAND'));
+				await speakCloned(UNIVERSAL_FALLBACK);
 				return;
 			}
 			try {
 				await handlePayMpesa(amount, number);
 			} catch (error) {
-				await speakCloned(`I could not open M-Pesa. ${error.message}`);
+				await speakCloned(UNIVERSAL_FALLBACK);
 			}
+			return;
+		}
+
+		case 'TEACH': {
+			const fact = String(params?.fact ?? '').trim();
+			if (!fact) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				return;
+			}
+			await handleTeach(fact);
+			return;
+		}
+
+		case 'CALL_CONTACT': {
+			const name = String(params?.name ?? '').trim();
+			if (!name) {
+				await speakCloned(UNIVERSAL_FALLBACK);
+				return;
+			}
+			await handleCallContact(name);
 			return;
 		}
 
@@ -299,17 +582,48 @@ async function handleCommand(transcript) {
 			return;
 
 		default:
-			await speakCloned(phrase('UNKNOWN_COMMAND'));
+			await speakCloned(UNIVERSAL_FALLBACK);
+	}
+}
+
+async function handleCommand(transcript) {
+	try {
+		return await executeCommand(transcript);
+	} catch (error) {
+		await speakCloned(UNIVERSAL_FALLBACK);
+		return undefined;
 	}
 }
 
 async function handleVoiceCommand() {
 	const transcript = await listen();
-	return handleCommand(transcript);
+	const { command } = matchCommand(transcript);
+	// Widget tap starts a wake session: "hello" opens the loop, and anything
+	// else runs as the first command inside the same session.
+	if (command === 'WAKE') {
+		await handleWakeSession();
+		return;
+	}
+	if (command === 'STOP_SESSION') {
+		await speakCloned(phrase('SESSION_SIGNOFF'));
+		return;
+	}
+	if (!String(transcript ?? '').trim()) {
+		return;
+	}
+	await handleWakeSession(transcript);
 }
 
 async function handleTextCommand(text) {
 	return handleCommand(text);
 }
 
-module.exports = { handleCommand, handleVoiceCommand, handleTextCommand };
+module.exports = {
+	handleCommand,
+	handleVoiceCommand,
+	handleTextCommand,
+	handleWakeSession,
+	startListeningLoop,
+	stopListening,
+	setListeningState
+};

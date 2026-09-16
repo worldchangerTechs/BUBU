@@ -1,8 +1,10 @@
 const {
 	WATCHED_CHATS,
+	PRIORITY_SENDERS,
 	IGNORE_CHAT_PATTERNS,
 	IMPORTANT_KEYWORDS
 } = require('./config');
+const { getProfile } = require('./store');
 
 function matchesAny(value, patterns) {
 	const normalizedValue = typeof value === 'string' ? value.toLowerCase() : '';
@@ -12,8 +14,20 @@ function matchesAny(value, patterns) {
 	);
 }
 
-function classifyMessage(chatName, text) {
-	if (matchesAny(chatName, WATCHED_CHATS)) {
+// Learned words ADD to the config.js list at runtime — never replace it.
+// They only grow from explicit TEACH commands, never from inference.
+function effectiveImportantKeywords() {
+	let learned = [];
+	try {
+		learned = getProfile().learnedImportantWords || [];
+	} catch {
+		learned = [];
+	}
+	return [...IMPORTANT_KEYWORDS, ...learned];
+}
+
+function classifyMessage(chatName, text, senderName) {
+	if (matchesAny(chatName, WATCHED_CHATS) || matchesAny(senderName, PRIORITY_SENDERS)) {
 		return 'CLASS';
 	}
 
@@ -21,11 +35,11 @@ function classifyMessage(chatName, text) {
 		return 'IGNORE';
 	}
 
-	if (matchesAny(text, IMPORTANT_KEYWORDS)) {
+	if (matchesAny(text, effectiveImportantKeywords())) {
 		return 'IMPORTANT';
 	}
 
 	return 'NORMAL';
 }
 
-module.exports = { classifyMessage };
+module.exports = { classifyMessage, effectiveImportantKeywords };

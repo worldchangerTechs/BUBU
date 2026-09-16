@@ -5,6 +5,7 @@ const store = require('./store');
 const { setAlarm } = require('./termux/alarm');
 const { speakCloned } = require('./termux/cloudTts');
 const { phrase } = require('./personality');
+const { isRealClassMessage } = require('./classIntentAnalyzer');
 
 const MAX_MESSAGES = 10;
 const recentMessages = [];
@@ -24,8 +25,8 @@ function getRecentMessages(limit = MAX_MESSAGES) {
 	return recentMessages.slice(-requestedLimit);
 }
 
-async function handleMessage(chatName, text, senderJid) {
-	const classification = classifyMessage(chatName, text);
+async function handleMessage(chatName, text, senderJid, senderName) {
+	const classification = classifyMessage(chatName, text, senderName);
 	logger.info(`[message] [${chatName}] ${classification}`);
 
 	if (classification === 'IGNORE') {
@@ -52,6 +53,11 @@ async function handleMessage(chatName, text, senderJid) {
 		return;
 	}
 
+	if (!(await isRealClassMessage(text))) {
+		logger.info(`[class] Ignored non-class message from [${chatName}]`);
+		return;
+	}
+
 	store.addDigestItem({
 		chatName,
 		text,
@@ -62,6 +68,14 @@ async function handleMessage(chatName, text, senderJid) {
 	if (event) {
 		store.addEvent(event);
 		await setAlarm(event.date, event.title);
+		store.setClassStatus({
+			hasClass: true,
+			title: event.title,
+			time: event.date,
+			chatName,
+			alarmSet: true,
+			lastUpdated: Date.now()
+		});
 		await speakCloned(phrase('ALARM_SET', {
 			title: event.title,
 			time: new Date(event.date).toLocaleString()

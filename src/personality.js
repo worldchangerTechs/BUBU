@@ -1,12 +1,19 @@
+const BUBU_MASTER_SYSTEM_PROMPT = `You are BUBU, a personal voice assistant belonging to Mr. Tipape. Rules you always follow:
+1. Address the user as "sir" in every spoken response.
+2. On first greeting each session, say "Welcome, Mr. Tipape, sir." Otherwise keep greetings brief.
+3. Be fast, warm, and clear. Keep answers short enough to comfortably speak aloud, unless the user has asked for a story, explanation, or something intentionally longer.
+4. If a request can't actually be done - no matching command, a tool/API failure, or something outside what you're able to do - respond exactly: "I'm sorry sir, but that is not possible for now." Never fake an action you didn't actually perform.
+5. Never claim to remember something that wasn't explicitly told to you or stored in your profile. Never invent facts about the user.
+6. You are a tool that helps with tasks - not a substitute for real relationships, professional help, or people the user can actually talk to. If something serious comes up (distress, isolation, health), gently point toward a real person, without repeating that every single time.`;
+
 const CHAT_SYSTEM_PROMPT = [
-	'You are BUBU, a warm, casual, attentive personal assistant with a light sense of humor.',
-	'Listen carefully, be encouraging, and keep replies concise and natural.',
-	'You are not a substitute for real people, friendship, or professional care, and never claim to be one.',
-	'Only claim to remember details present in this conversation; do not pretend to remember anything across sessions.',
-	'If the user shares ongoing sadness, isolation, or distress, respond with empathy and gently suggest talking with someone they trust or a qualified professional when appropriate.',
-	'Do this supportively and without sounding preachy, alarmist, or repetitive; keep ordinary conversations ordinary.',
+	BUBU_MASTER_SYSTEM_PROMPT,
 	'Be funny when it fits, but never at the user\'s expense.'
 ].join(' ');
+
+function isTimeSensitive(question) {
+	return /\b(today|tonight|tomorrow|yesterday|current|currently|latest|recent|now|news|weather|forecast|price|cost|stock|score|schedule|event|deadline|version|release|who is|what is happening)\b/i.test(String(question ?? ''));
+}
 
 const AWAY_REPLY_SYSTEM_PROMPT = [
 	'Write one brief, friendly reply to the incoming message.',
@@ -111,6 +118,46 @@ const variants = {
 		() => 'Okay, cancelled',
 		() => 'No problem — cancelled, nothing opened.',
 		() => 'Got it, cancelled. Let me know if you want to try again.'
+	],
+	WAKE: [
+		() => 'Hey! I am listening — what do you need?',
+		() => 'Hi there! What can I do for you?',
+		() => 'Hello! Go ahead, I am all ears.'
+	],
+	SESSION_SIGNOFF: [
+		() => 'Got it — going quiet. Just say hello when you need me.',
+		() => 'All done. I will be right here when you call.',
+		() => 'Okay, signing off for now. Holler when you need me.'
+	],
+	TEACH_SAVED: [
+		({ fact }) => `Got it — I'll treat ${fact || 'that'} as important from now on.`,
+		({ fact }) => `Learned: ${fact || 'that'} is important. I'll watch for it.`,
+		() => 'Noted — I will remember that going forward.'
+	],
+	CALL_ANNOUNCE: [
+		({ name }) => `Calling ${name || 'them'}. Say cancel to stop`,
+		({ name }) => `Dialing ${name || 'them'} now — say cancel if that's wrong.`,
+		({ name }) => `Putting the call through to ${name || 'them'}. Say cancel to stop me.`
+	],
+	CALL_CANCELLED: [
+		() => 'Okay, not calling.',
+		() => 'Call cancelled — nothing dialed.',
+		() => 'Got it, I cancelled the call.'
+	],
+	WHATSAPP_SENT: [
+		({ name }) => `WhatsApp sent to ${name || 'them'}. Nicely done.`,
+		({ name }) => `That's on its way to ${name || 'them'} on WhatsApp.`,
+		({ name }) => `Sent to ${name || 'them'} on WhatsApp.`
+	],
+	CLASS_STATUS_EMPTY: [
+		() => 'No class announced right now.',
+		() => 'There is no class announcement right now.',
+		() => 'Nothing on the class radar right now.'
+	],
+	CLASS_STATUS: [
+		({ title, time }) => `Yes - ${title || 'a class'} at ${time || 'the announced time'}. Alarm's already set.`,
+		({ title, time }) => `Yes, ${title || 'there is a class'} at ${time || 'the announced time'}. Alarm's already set.`,
+		({ title, time }) => `${title || 'A class is announced'} at ${time || 'the announced time'}. The alarm is already set.`
 	]
 };
 
@@ -152,7 +199,9 @@ function phrase(eventType, details = {}) {
 
 module.exports = {
 	phrase,
+	BUBU_MASTER_SYSTEM_PROMPT,
 	CHAT_SYSTEM_PROMPT,
+	isTimeSensitive,
 	AWAY_REPLY_SYSTEM_PROMPT,
 	REPLY_DRAFT_SYSTEM_PROMPT
 };

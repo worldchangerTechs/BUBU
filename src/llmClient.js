@@ -1,8 +1,9 @@
 const fetch = require('node-fetch');
+const { BUBU_MASTER_SYSTEM_PROMPT } = require('./personality');
 
 const COMPLETION_ENDPOINT = 'http://127.0.0.1:8090/completion';
 
-async function complete(prompt, systemPrompt) {
+async function complete(prompt, systemPrompt = BUBU_MASTER_SYSTEM_PROMPT) {
 	const combinedPrompt = `${systemPrompt}\n\n${prompt}`;
 	let response;
 

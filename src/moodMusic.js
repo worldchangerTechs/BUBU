@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const logger = require('./logger');
+const store = require('./store');
 
 // Mood keyword -> tuned YouTube search query.
 const MOOD_QUERIES = {
@@ -111,11 +112,40 @@ async function searchYouTube(moodText) {
 	return url;
 }
 
+function moodKey(moodText) {
+	const normalized = String(moodText || '').toLowerCase();
+	for (const mood of Object.keys(MOOD_QUERIES)) {
+		if (normalized.includes(mood)) {
+			return mood;
+		}
+	}
+	return normalized.trim().split(/\s+/)[0] || 'generic';
+}
+
 async function playForMood(moodText) {
+	const key = moodKey(moodText);
+	// Strong preference first: a track played 3+ times for this mood wins
+	// over searching again. Only grows from direct repeated plays.
+	let preferred = null;
+	try {
+		preferred = store.getPreferredTrack(key);
+	} catch {
+		preferred = null;
+	}
+	if (preferred) {
+		try {
+			await playLocalTrack(preferred);
+			store.recordMoodTrack(key, preferred);
+			return { source: 'local', track: preferred };
+		} catch (error) {
+			logger.warn(`[music] Preferred track failed, searching again: ${error.message}`);
+		}
+	}
 	const localTrack = findLocalTrack(moodText);
 	if (localTrack) {
 		try {
 			await playLocalTrack(localTrack);
+			store.recordMoodTrack(key, localTrack);
 			return { source: 'local', track: localTrack };
 		} catch (error) {
 			logger.warn(`[music] Local playback failed, falling back to YouTube: ${error.message}`);

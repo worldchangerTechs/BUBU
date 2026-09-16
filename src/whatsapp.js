@@ -182,9 +182,10 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 			const chatName = await getChatName(sock, message);
 			const messageText = getMessageText(message.message);
 			const senderJid = message.key.participant || message.key.remoteJid;
+						const senderName = message.pushName || message.verifiedName || '';
 			const isDirectMessage = !message.key.remoteJid?.endsWith('@g.us');
 			await maybeSendAwayReply(isDirectMessage, senderJid, messageText);
-			await onMessage(chatName, messageText, senderJid);
+						await onMessage(chatName, messageText, senderJid, senderName);
 		}
 	});
 
@@ -199,4 +200,16 @@ async function sendMessage(jid, text) {
 	return socket.sendMessage(jid, { text: String(text) });
 }
 
-module.exports = { connectWhatsApp, sendMessage };
+// Contact-list numbers come back in display form ("+254 712 345678",
+// "0712-345-678"). Baileys needs pure country-code digits + suffix:
+// "254712345678@s.whatsapp.net". Leading trunk zero is dropped because it
+// is never part of the international form.
+function toWhatsAppJid(phoneNumber) {
+	const digits = String(phoneNumber ?? '').replace(/\D/g, '').replace(/^0+/, '');
+	if (!digits) {
+		throw new Error('toWhatsAppJid requires a phone number.');
+	}
+	return `${digits}@s.whatsapp.net`;
+}
+
+module.exports = { connectWhatsApp, sendMessage, toWhatsAppJid };

@@ -1,4 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# BUBU voice widget: ONE tap = one wake session.
+# Say "hello" (or anything) once, then keep talking — BUBU greets you and
+# keeps listening for follow-up commands in the SAME session until you say
+# "stop" / "that's all" / "done" or go quiet for ~15 seconds.
 # Copy this file to ~/.shortcuts/ and make it executable with: chmod +x voice-command.sh
 # Set this per device because widget scripts run from ~/.shortcuts/.
 # Tries ~/BUBU first (this repo), then falls back to ~/bubu.

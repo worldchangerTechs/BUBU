@@ -36,4 +36,16 @@ async function searchGoogle(query) {
 	return { method: 'browser', url };
 }
 
-module.exports = { searchGoogle };
+// Dials a number directly with NO confirmation screen — the call goes out
+// as soon as Android processes the intent. Callers MUST resolve + confirm
+// the contact (see voiceRouter handleCallContact) before invoking this.
+async function callContact(number) {
+	const tel = String(number ?? '').replace(/[\s\-()]/g, '');
+	if (!tel) {
+		throw new Error('callContact requires a number.');
+	}
+	await runBinary('am', ['start', '-a', 'android.intent.action.CALL', '-d', `tel:${tel}`]);
+	return { method: 'call', number: tel };
+}
+
+module.exports = { searchGoogle, callContact };
