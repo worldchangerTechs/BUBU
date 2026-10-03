@@ -1,11 +1,22 @@
 #!/usr/bin/env node
-const { execFile, spawn } = require('node:child_process');
+const { execFile, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
 const PROJECT_DIR = path.join(__dirname, '..');
 const PACKAGE_JSON = path.join(PROJECT_DIR, 'package.json');
+
+function resolveBinaryOnPath(cmd) {
+	const executable = process.platform === 'win32' ? 'where' : 'which';
+	const result = spawnSync(executable, [cmd], { shell: false, encoding: 'utf8' });
+	if (result.status === 0) {
+		const output = String(result.stdout || '').trim();
+		const first = output.split(/\r?\n/).find(Boolean);
+		return first || output;
+	}
+	return '';
+}
 
 const CHECKS = [
 	{ id: 'node', name: 'Node.js >= 18', fn: checkNode },
@@ -53,47 +64,19 @@ function checkNode() {
 }
 
 function checkBinary(cmd) {
-	return new Promise((resolve) => {
-		const child = spawn('command', ['-v', cmd], { shell: true, timeout: 4000 });
-		let stdout = '';
-		child.stdout.on('data', (d) => { stdout += d; });
-		child.on('error', () => resolve({ status: 'FAIL', message: 'not found' }));
-		child.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve({ status: 'PASS', message: stdout.trim() });
-			} else {
-				resolve({ status: 'WARN', message: 'not found (permission or missing)' });
-			}
-		});
-	});
+	const result = resolveBinaryOnPath(cmd);
+	if (result) {
+		return { status: 'PASS', message: result };
+	}
+	return { status: 'WARN', message: 'not found (permission or missing)' };
 }
 
 function checkTermuxBinary(cmd) {
-	// On non-Android, these won't exist. Probe with 4s timeout.
-	return new Promise((resolve) => {
-		const child = spawn('command', ['-v', cmd], { shell: true });
-		let stdout = '';
-		let killed = false;
-		const timeout = setTimeout(() => {
-			killed = true;
-			child.kill('SIGKILL');
-			resolve({ status: 'WARN', message: 'timeout (permission issue likely)' });
-		}, 4000);
-		child.stdout.on('data', (d) => { stdout += d; });
-		child.on('error', () => {
-			clearTimeout(timeout);
-			if (!killed) resolve({ status: 'WARN', message: 'not found' });
-		});
-		child.on('close', (code) => {
-			clearTimeout(timeout);
-			if (killed) return;
-			if (code === 0 && stdout.trim()) {
-				resolve({ status: 'PASS', message: stdout.trim() });
-			} else {
-				resolve({ status: 'WARN', message: 'not found (permission or missing)' });
-			}
-		});
-	});
+	const result = resolveBinaryOnPath(cmd);
+	if (result) {
+		return { status: 'PASS', message: result };
+	}
+	return { status: 'WARN', message: 'not found (permission or missing)' };
 }
 
 function checkDotenvCount() {
@@ -143,18 +126,11 @@ function checkLlamaServerBin() {
 		}
 	}
 	// bare binary: check via command -v
-	return new Promise((resolve) => {
-		const child = spawn('command', ['-v', bin], { shell: true, timeout: 4000 });
-		let stdout = '';
-		child.stdout.on('data', (d) => { stdout += d; });
-		child.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve({ status: 'PASS', message: stdout.trim() });
-			} else {
-				resolve({ status: 'WARN', message: 'not on PATH' });
-			}
-		});
-	});
+	const result = resolveBinaryOnPath(bin);
+	if (result) {
+		return { status: 'PASS', message: result };
+	}
+	return { status: 'WARN', message: 'not on PATH' };
 }
 
 function checkLlamaHealth() {

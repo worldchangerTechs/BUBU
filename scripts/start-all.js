@@ -16,9 +16,14 @@ const SKIP_LLM = process.env.SKIP_LLM === '1';
 
 function findLlamaBin() {
 	if (process.env.LLAMA_BIN) return process.env.LLAMA_BIN;
+	const executable = process.platform === 'win32' ? 'where' : 'which';
 	for (const candidate of ['llama-server', 'server']) {
-		const found = spawnSync('command', ['-v', candidate], { shell: true });
-		if (found.status === 0) return candidate;
+		const found = spawnSync(executable, [candidate], { shell: false, encoding: 'utf8' });
+		if (found.status === 0) {
+			const output = String(found.stdout || '').trim();
+			const resolved = output.split(/\r?\n/).find(Boolean);
+			if (resolved) return candidate;
+		}
 	}
 	return null;
 }

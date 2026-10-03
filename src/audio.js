@@ -303,35 +303,57 @@ async function listenOnce() {
 	return new Promise((resolve) => {
 		let completed = false;
 		let timer = null;
+		let graceTimer = null;
 
-		const child = execFile('termux-speech-to-text', [], { timeout: 8000 }, (error, stdout) => {
+		const finalize = (value) => {
 			if (completed) return;
 			completed = true;
 			if (timer) clearTimeout(timer);
+			if (graceTimer) clearTimeout(graceTimer);
 			setState(STATE.IDLE);
-			if (!error && stdout) {
-				resolve(String(stdout).trim().toLowerCase());
-			} else {
-				resolve('');
+			resolve(value);
+		};
+
+		const child = execFile('termux-speech-to-text', [], (error, stdout) => {
+			if (completed) return;
+			if (isIgnorableSttConnectionError(error)) {
+				log.debug('[audio] Ignoring STT connection-refused shutdown from a terminated child process.');
+				return;
 			}
+			finalize(!error && stdout ? String(stdout).trim().toLowerCase() : '');
 		});
 
-		child.on('error', () => {
+		child.on('error', (error) => {
 			if (completed) return;
-			completed = true;
-			if (timer) clearTimeout(timer);
-			setState(STATE.IDLE);
-			resolve('');
+			if (isIgnorableSttConnectionError(error)) {
+				log.debug('[audio] Ignoring STT ECONNREFUSED after graceful shutdown.');
+				return;
+			}
+			finalize('');
 		});
 
 		timer = setTimeout(() => {
 			if (completed) return;
-			completed = true;
-			try { child.kill('SIGKILL'); } catch {}
-			setState(STATE.IDLE);
-			resolve('');
-		}, 8000);
+			try { child.kill('SIGTERM'); } catch {}
+			graceTimer = setTimeout(() => {
+				if (completed) return;
+				try { child.kill('SIGKILL'); } catch {}
+				finalize('');
+			}, 2000);
+		}, 25000);
 	});
+}
+
+function isIgnorableSttConnectionError(error) {
+	if (!error) return false;
+	const message = String(error.message || '').toLowerCase();
+	return (
+		error.code === 'ECONNREFUSED' ||
+		error.code === 'ECONNRESET' ||
+		message.includes('connection refused') ||
+		message.includes('econnrefused') ||
+		message.includes('socket hang up')
+	);
 }
 
 function _setMockListenTranscript(str) {
