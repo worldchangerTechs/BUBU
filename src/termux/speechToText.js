@@ -1,5 +1,5 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 
 async function listen() {
 	return new Promise((resolve, reject) => {
@@ -10,7 +10,7 @@ async function listen() {
 			}
 
 			if (error.code === 'ENOENT') {
-				logger.warn('termux-speech-to-text unavailable; install Termux:API to enable voice input.');
+				log.warn('termux-speech-to-text unavailable; install Termux:API to enable voice input.');
 				resolve('');
 				return;
 			}

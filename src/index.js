@@ -4,15 +4,41 @@ const { connectWhatsApp } = require('./whatsapp');
 const { handleMessage } = require('./messageHandler');
 const { handleTextCommand, startListeningLoop } = require('./voiceRouter');
 const readline = require('node:readline');
-const logger = require('./logger');
+const { log } = require('./logger');
 const { OWNER_PHONE_NUMBER, AWAY_REPLY_MODE } = require('./config');
 const store = require('./store');
 const { startSmsWatcher } = require('./smsWatcher');
 const { sendSms } = require('./termux/sms');
 const { complete } = require('./llmClient');
 const { AWAY_REPLY_SYSTEM_PROMPT } = require('./personality');
+const { say } = require('./audio');
+const { setBubuStatus } = require('./store');
 
 const autoRepliedSmsSenders = new Set();
+
+function getTimeGreeting() {
+	const hour = new Date().getHours();
+	if (hour >= 5 && hour <= 11) return 'Good morning, Mr. Tipape, sir.';
+	if (hour >= 12 && hour <= 16) return 'Good afternoon, Mr. Tipape, sir.';
+	if (hour >= 17 && hour <= 20) return 'Good evening, Mr. Tipape, sir.';
+	return "You're up late, sir — burning the midnight oil?";
+}
+
+async function bootSequence() {
+	setBubuStatus({
+		core: 'ONLINE',
+		llm: process.env.ANTHROPIC_API_KEY ? 'CLOUD' : 'LOCAL',
+		whatsapp: 'CONNECTING'
+	});
+
+	if (typeof startListeningLoop === 'function') {
+		startListeningLoop();
+	}
+
+	await say(getTimeGreeting());
+	await say('What would you like me to start with, sir?');
+	return true;
+}
 
 function startHudWhenConnected() {
 	try {
@@ -21,12 +47,12 @@ function startHudWhenConnected() {
 		hud.setStatus('LISTENING');
 		startListeningLoop();
 	} catch (error) {
-		console.warn(`[bubu] HUD unavailable: ${error.message}`);
+		log.warn(`[bubu] HUD unavailable: ${error.message}`);
 	}
 }
 
 async function handleNewSms(from, body) {
-	logger.info(`[sms] New message from ${from || 'unknown sender'}`);
+	log.info(`[sms] New message from ${from || 'unknown sender'}`);
 	if (!store.isAwayMode() || AWAY_REPLY_MODE !== 'AI') {
 		return;
 	}
@@ -38,7 +64,7 @@ async function handleNewSms(from, body) {
 	try {
 		replyText = await complete(body || '', AWAY_REPLY_SYSTEM_PROMPT);
 	} catch (error) {
-		logger.warn(`[sms] AI away reply unavailable: ${error.message}`);
+		log.warn(`[sms] AI away reply unavailable: ${error.message}`);
 		return;
 	}
 
@@ -46,14 +72,16 @@ async function handleNewSms(from, body) {
 		await sendSms(from, replyText);
 		autoRepliedSmsSenders.add(from);
 	} catch (error) {
-		logger.error(`[sms] Away reply failed: ${error.message}`);
+		log.error(`[sms] Away reply failed: ${error.message}`);
 	}
 }
 
 async function start() {
-	logger.info('[bubu] Starting WhatsApp assistant...');
+	log.info('[bubu] Starting WhatsApp assistant...');
 	startSmsWatcher(handleNewSms);
-	await connectWhatsApp(handleMessage, startHudWhenConnected, OWNER_PHONE_NUMBER);
+	const bootPromise = bootSequence();
+	void connectWhatsApp(handleMessage, startHudWhenConnected, OWNER_PHONE_NUMBER);
+	await bootPromise;
 	// Text trigger: type any BUBU command into this same terminal while the bot runs
 	// (same command set as voice, e.g. "read my messages", "text mum saying ...").
 	// Disabled automatically when stdin is not a TTY (e.g. under bubu-up.js).
@@ -66,7 +94,7 @@ async function start() {
 				try {
 					await handleTextCommand(text);
 				} catch (error) {
-					logger.error(`[bubu] Text command failed: ${error.message}`);
+					log.error(`[bubu] Text command failed: ${error.message}`);
 				}
 			}
 			rl.prompt();
@@ -78,7 +106,9 @@ async function start() {
 	try {
 		await start();
 	} catch (error) {
-		logger.error(`[bubu] Startup failed: ${error.message}`);
+		log.error(`[bubu] Startup failed: ${error.message}`);
 		process.exit(1);
 	}
 })();
+
+module.exports = { bootSequence };

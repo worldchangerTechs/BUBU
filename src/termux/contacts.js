@@ -1,5 +1,5 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 
 async function findContact(name) {
 	if (typeof name !== 'string' || !name.trim()) {
@@ -10,7 +10,7 @@ async function findContact(name) {
 		execFile('termux-contact-list', [], (error, stdout) => {
 			if (error) {
 				if (error.code === 'ENOENT') {
-					logger.warn('termux-contact-list unavailable; contact lookup skipped. Install Termux:API.');
+					log.warn('termux-contact-list unavailable; contact lookup skipped. Install Termux:API.');
 					resolve(null);
 					return;
 				}

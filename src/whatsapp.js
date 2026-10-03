@@ -1,27 +1,65 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { log, silentLogger } = require('./logger');
 const {
-	default: makeWASocket,
-	useMultiFileAuthState,
-	DisconnectReason,
-	Browsers,
-	fetchLatestBaileysVersion
-} = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
-const logger = require('./logger');
-const { AWAY_AUTO_REPLY_TEXT, AWAY_REPLY_MODE } = require('./config');
+	WATCHED_CHATS,
+	PRIORITY_SENDERS,
+	PRIORITY_NUMBERS,
+	DEBUG_SENDERS,
+	AWAY_AUTO_REPLY_TEXT,
+	AWAY_REPLY_MODE
+} = require('./config');
 const { AWAY_REPLY_SYSTEM_PROMPT } = require('./personality');
-const { complete } = require('./llmClient');
 const store = require('./store');
-const { handleMessage } = require('./messageHandler');
+const { isOnline } = require('./net');
+const { say } = require('./audio');
+
+function updateWhatsappStatus(status) {
+	const current = store.getBubuStatus();
+	store.setBubuStatus({ ...current, whatsapp: status });
+}
 
 const AUTH_DIR = path.join(__dirname, '..', 'auth_info');
-let socket;
+let socket = null;
 let pairingRequested = false;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
+let hasGreeted = false;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const autoRepliedSenders = new Set();
+const groupSubjectCache = new Map();
+const seenMessageIds = new Map(); // LRU cache of 500 IDs
+const priorityDigitsSet = new Set((PRIORITY_NUMBERS || []).map((n) => String(n).replace(/\D/g, '').slice(-9)));
+
+let baileysPromise = null;
+async function getBaileys() {
+	if (!baileysPromise) {
+		baileysPromise = import('@whiskeysockets/baileys');
+	}
+	return baileysPromise;
+}
+
+function resolvePriorityContacts() {
+	if (process.env.BUBU_MOCK_TERMUX === '1') return;
+	const { execFile } = require('node:child_process');
+	execFile('termux-contact-list', [], { timeout: 4000 }, (err, stdout) => {
+		if (!err && stdout) {
+			try {
+				const contacts = JSON.parse(stdout);
+				for (const c of contacts) {
+					const name = c.name || '';
+					if (PRIORITY_SENDERS.some((ps) => name.toLowerCase().includes(ps.toLowerCase()))) {
+						const num = c.number || '';
+						const digits = num.replace(/\D/g, '');
+						if (digits.length >= 9) {
+							priorityDigitsSet.add(digits.slice(-9));
+						}
+					}
+				}
+			} catch {}
+		}
+	});
+}
 
 function normalizePhoneNumber(phoneNumber) {
 	return String(phoneNumber || '').replace(/\D/g, '');
@@ -34,17 +72,19 @@ function clearReconnectTimer() {
 	}
 }
 
-function scheduleReconnect(onMessage, onConnected, phoneNumber, baseDelayMs) {
-	if (reconnectTimer) {
-		return;
-	}
+function scheduleReconnect(onMessage, onConnected, phoneNumber) {
+	if (reconnectTimer) return;
 	reconnectAttempts += 1;
-	const delayMs = Math.min(baseDelayMs * reconnectAttempts, MAX_RECONNECT_DELAY_MS);
-	logger.info(`[whatsapp] Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})...`);
+	// Exponential backoff 2, 4, 8, ... capped at 60s with jitter
+	const baseDelay = Math.min(2000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY_MS);
+	const jitter = Math.floor(Math.random() * 1000);
+	const delayMs = Math.min(baseDelay + jitter, MAX_RECONNECT_DELAY_MS);
+
+	log.info(`[whatsapp] Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})...`);
 	reconnectTimer = setTimeout(() => {
 		reconnectTimer = null;
 		connectWhatsApp(onMessage, onConnected, phoneNumber).catch((error) => {
-			logger.error(`[whatsapp] Reconnect failed: ${error.message}`);
+			log.error(`[whatsapp] Reconnect failed: ${error.message}`);
 		});
 	}, delayMs);
 }
@@ -58,22 +98,22 @@ function getMessageText(message) {
 		|| '';
 }
 
-async function getChatName(currentSocket, message) {
-	const remoteJid = message.key.remoteJid;
-	if (remoteJid?.endsWith('@g.us')) {
-		try {
-			const metadata = await currentSocket.groupMetadata(remoteJid);
-			return metadata.subject || remoteJid;
-		} catch {
-			return remoteJid;
-		}
+function isDuplicateMessage(msgId) {
+	if (!msgId) return false;
+	if (seenMessageIds.has(msgId)) return true;
+	seenMessageIds.set(msgId, Date.now());
+	if (seenMessageIds.size > 500) {
+		const oldest = seenMessageIds.keys().next().value;
+		seenMessageIds.delete(oldest);
 	}
-
-	return message.pushName || remoteJid;
+	return false;
 }
 
 async function maybeSendAwayReply(isDirectMessage, senderJid, messageText) {
-	if (!isDirectMessage || !senderJid || !store.isAwayMode() || autoRepliedSenders.has(senderJid)) {
+	if (!isDirectMessage || !store.isAwayMode()) {
+		return;
+	}
+	if (autoRepliedSenders.has(senderJid)) {
 		return;
 	}
 
@@ -81,113 +121,171 @@ async function maybeSendAwayReply(isDirectMessage, senderJid, messageText) {
 		let replyText = AWAY_AUTO_REPLY_TEXT;
 		if (AWAY_REPLY_MODE === 'AI') {
 			try {
-				replyText = await complete(messageText, AWAY_REPLY_SYSTEM_PROMPT);
+				const { complete } = require('./llmClient');
+				replyText = await complete(messageText, AWAY_REPLY_SYSTEM_PROMPT, { stream: false });
 			} catch (error) {
-				logger.warn(`[whatsapp] AI away reply unavailable: ${error.message}; using static reply.`);
+				log.warn(`[whatsapp] AI away reply unavailable: ${error.message}; using static reply.`);
 			}
 		}
 
 		await sendMessage(senderJid, replyText);
 		autoRepliedSenders.add(senderJid);
 	} catch (error) {
-		logger.error(`[whatsapp] Away reply failed: ${error.message}`);
+		log.error(`[whatsapp] Away reply failed: ${error.message}`);
 	}
 }
 
 async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
-	if (typeof onMessage !== 'function') {
-		throw new TypeError('connectWhatsApp requires an onMessage callback.');
-	}
-
-	fs.mkdirSync(AUTH_DIR, { recursive: true });
-	const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 	clearReconnectTimer();
-	let version;
-	try {
-		({ version } = await fetchLatestBaileysVersion());
-	} catch (error) {
-		logger.warn(`[whatsapp] Could not fetch latest WhatsApp Web version, using bundled defaults: ${error.message}`);
-	}
+	updateWhatsappStatus('CONNECTING');
+
+	const baileys = await getBaileys();
+	const makeWASocket = baileys.default || baileys.makeWASocket;
+	const { useMultiFileAuthState, DisconnectReason, Browsers } = baileys;
+
+	const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+
 	const sock = makeWASocket({
 		auth: state,
-		...(version ? { version } : {}),
+		logger: silentLogger,
+		printQRInTerminal: !phoneNumber,
 		browser: Browsers.ubuntu('Chrome'),
-		printQRInTerminal: false,
-		syncFullHistory: false,
-		markOnlineOnConnect: false
+		defaultQueryTimeoutMs: 60000
 	});
 	socket = sock;
-	let hasOpened = false;
 
 	sock.ev.on('creds.update', saveCreds);
-	sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-		if (qr && !phoneNumber) {
-			qrcode.generate(qr, { small: true });
-		}
+
+	sock.ev.on('connection.update', async (update) => {
+		const { connection, lastDisconnect } = update;
 
 		if (connection === 'open') {
-			hasOpened = true;
 			reconnectAttempts = 0;
-			logger.info('[whatsapp] Connected!');
+			updateWhatsappStatus('CONNECTED');
+			log.info('[whatsapp] Connected!');
+
+			// Cache group subjects on open
+			try {
+				const groups = await sock.groupFetchAllParticipating();
+				for (const [jid, metadata] of Object.entries(groups)) {
+					if (metadata?.subject) {
+						if (!groupSubjectCache.has(jid)) {
+							log.info(`[whatsapp] Discovered group: "${metadata.subject}" (${jid})`);
+						}
+						groupSubjectCache.set(jid, metadata.subject);
+					}
+				}
+			} catch (err) {
+				log.warn(`[whatsapp] Failed to fetch participating groups: ${err.message}`);
+			}
+
+			// Resolve priority contacts
+			resolvePriorityContacts();
+
+			// Startup greeting is intentionally handled by the boot sequence, not by WhatsApp.
+			hasGreeted = true;
 			onConnected?.();
 		}
 
 		if (connection === 'close') {
-			logger.error(`[whatsapp] Connection closed: ${lastDisconnect?.error?.message || lastDisconnect?.error}`);
-			try {
-				sock.end(undefined);
-			} catch {
-				// Socket is already closed; nothing to clean up.
-			}
-			const statusCode = lastDisconnect?.error?.output?.statusCode
-				?? lastDisconnect?.error?.statusCode;
+			const statusCode = lastDisconnect?.error?.output?.statusCode;
+			const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
 			if (statusCode === DisconnectReason.loggedOut) {
+				updateWhatsappStatus('NOT_LINKED');
+				log.error('[whatsapp] WhatsApp was unlinked. Delete auth_info and pair again.');
+				say('WhatsApp was unlinked, sir. Delete auth_info and pair again.');
 				return;
 			}
-			if (pairingRequested && !hasOpened) {
-				logger.info('[whatsapp] Waiting for the pairing code to be entered...');
-				scheduleReconnect(onMessage, onConnected, phoneNumber, 25000);
-				return;
-			}
-			scheduleReconnect(onMessage, onConnected, phoneNumber, 5000);
+
+			updateWhatsappStatus('DISCONNECTED');
+			log.warn(`[whatsapp] Connection closed (code ${statusCode || 'unknown'}). Scheduling reconnect...`);
+			try { sock.end(undefined); } catch {}
+			scheduleReconnect(onMessage, onConnected, phoneNumber);
 		}
 	});
 
-	const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
-	if (normalizedPhoneNumber) {
+	// Pairing code logic: call at most once per process, 3s after socket starts, only when not registered
+	if (phoneNumber && !state.creds.registered && !pairingRequested) {
+		pairingRequested = true;
 		setTimeout(async () => {
-			if (!pairingRequested && !sock.authState.creds.registered) {
+			try {
+				const normalized = normalizePhoneNumber(phoneNumber);
+				log.info(`[whatsapp] Requesting pairing code for ${normalized}...`);
+				const code = await sock.requestPairingCode(normalized);
+				log.info(`[whatsapp] === Link WhatsApp with this code: ${code} ===`);
 				try {
-					const pairingCodePromise = sock.requestPairingCode(normalizedPhoneNumber);
-					pairingRequested = true;
-					const pairingCode = await pairingCodePromise;
-					console.log(`=== Link WhatsApp with this code: ${pairingCode} ===`);
-				} catch (error) {
-					logger.error(`[whatsapp] Pairing code request failed: ${error.message}`);
-				}
+					const { setStatus } = require('./hud/terminalHud');
+					setStatus(`Link code: ${code}`);
+				} catch {}
+			} catch (err) {
+				log.error(`[whatsapp] Pairing code request failed: ${err.message}`);
 			}
 		}, 3000);
 	}
 
-	sock.ev.on('messages.upsert', async ({ messages, type }) => {
-		if (type !== 'notify') {
-			return;
+	// Update cached group subjects on groups.upsert and groups.update
+	sock.ev.on('groups.upsert', (groups) => {
+		for (const g of groups) {
+			if (g?.id && g?.subject) {
+				if (!groupSubjectCache.has(g.id)) {
+					log.info(`[whatsapp] Discovered group: "${g.subject}" (${g.id})`);
+				}
+				groupSubjectCache.set(g.id, g.subject);
+			}
 		}
+	});
+
+	sock.ev.on('groups.update', (updates) => {
+		for (const u of updates) {
+			if (u?.id && u?.subject) {
+				groupSubjectCache.set(u.id, u.subject);
+			}
+		}
+	});
+
+	// Message filtering and handling
+	sock.ev.on('messages.upsert', async ({ messages, type }) => {
+		if (type !== 'notify') return;
 
 		for (const message of messages) {
-			if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') {
+			const remoteJid = message.key?.remoteJid || '';
+
+			// S6 Message filtering before anything else
+			if (
+				!remoteJid ||
+				remoteJid.endsWith('@newsletter') ||
+				remoteJid === 'status@broadcast' ||
+				remoteJid.endsWith('@broadcast') ||
+				message.key?.fromMe
+			) {
 				continue;
 			}
 
-			const chatName = await getChatName(sock, message);
+			// Dedupe by key.id with 500 LRU
+			if (isDuplicateMessage(message.key?.id)) {
+				continue;
+			}
+
+			const isGroup = remoteJid.endsWith('@g.us');
+			const chatName = isGroup ? (groupSubjectCache.get(remoteJid) || remoteJid) : (message.pushName || remoteJid.replace('@s.whatsapp.net', ''));
 			const messageText = getMessageText(message.message);
-			const senderJid = message.key.participant || message.key.remoteJid;
-						const senderName = message.pushName || message.verifiedName || '';
-			const isDirectMessage = !message.key.remoteJid?.endsWith('@g.us');
+			const senderJid = message.key?.participant || remoteJid;
+			const pushName = message.pushName || '';
+
+			// DEBUG_SENDERS: log raw identifiers from watched groups
+			if (DEBUG_SENDERS && WATCHED_CHATS.some((wc) => chatName.toLowerCase().includes(wc.toLowerCase()))) {
+				log.info(`[debug_senders] chat="${chatName}", participant="${message.key?.participant}", pushName="${pushName}", alt="${message.verifiedName || ''}"`);
+			}
+
+			const isDirectMessage = !isGroup;
 			await maybeSendAwayReply(isDirectMessage, senderJid, messageText);
-						await onMessage(chatName, messageText, senderJid, senderName);
+			await onMessage(chatName, messageText, senderJid, pushName);
 		}
 	});
+
+	// Periodic priority contacts resolution every 6 hours
+	setInterval(resolvePriorityContacts, 6 * 3600 * 1000);
 
 	return sock;
 }
@@ -196,14 +294,9 @@ async function sendMessage(jid, text) {
 	if (!socket) {
 		throw new Error('WhatsApp is not connected. Call connectWhatsApp first.');
 	}
-
 	return socket.sendMessage(jid, { text: String(text) });
 }
 
-// Contact-list numbers come back in display form ("+254 712 345678",
-// "0712-345-678"). Baileys needs pure country-code digits + suffix:
-// "254712345678@s.whatsapp.net". Leading trunk zero is dropped because it
-// is never part of the international form.
 function toWhatsAppJid(phoneNumber) {
 	const digits = String(phoneNumber ?? '').replace(/\D/g, '').replace(/^0+/, '');
 	if (!digits) {
@@ -212,4 +305,21 @@ function toWhatsAppJid(phoneNumber) {
 	return `${digits}@s.whatsapp.net`;
 }
 
-module.exports = { connectWhatsApp, sendMessage, toWhatsAppJid };
+function isPrioritySender(senderJidOrNumber, pushName = '') {
+	const digits = String(senderJidOrNumber ?? '').replace(/\D/g, '');
+	if (digits.length >= 9 && priorityDigitsSet.has(digits.slice(-9))) {
+		return true;
+	}
+	if (pushName && PRIORITY_SENDERS.some((ps) => pushName.toLowerCase().includes(ps.toLowerCase()))) {
+		return true;
+	}
+	return false;
+}
+
+module.exports = {
+	connectWhatsApp,
+	sendMessage,
+	toWhatsAppJid,
+	isPrioritySender,
+	_isDuplicateMessage: isDuplicateMessage
+};

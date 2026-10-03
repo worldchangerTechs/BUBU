@@ -1,5 +1,5 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 
 function commandError(command, error) {
 	if (error.code === 'ENOENT') {
@@ -18,7 +18,7 @@ async function listSms(limit = 5) {
 		execFile('termux-sms-list', ['-l', String(limit)], (error, stdout) => {
 			if (error) {
 				if (error.code === 'ENOENT') {
-					logger.warn('termux-sms-list unavailable; SMS list is empty. Install Termux:API.');
+					log.warn('termux-sms-list unavailable; SMS list is empty. Install Termux:API.');
 					resolve([]);
 					return;
 				}
@@ -50,7 +50,7 @@ async function sendSms(number, message) {
 		execFile('termux-sms-send', ['-n', String(number), String(message)], (error) => {
 			if (error) {
 				if (error.code === 'ENOENT') {
-					logger.warn('termux-sms-send unavailable; SMS was not sent. Install Termux:API.');
+					log.warn('termux-sms-send unavailable; SMS was not sent. Install Termux:API.');
 					resolve(false);
 					return;
 				}

@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
-const logger = require('./logger');
+const { log } = require('./logger');
 const store = require('./store');
 
 // Mood keyword -> tuned YouTube search query.
@@ -138,7 +138,7 @@ async function playForMood(moodText) {
 			store.recordMoodTrack(key, preferred);
 			return { source: 'local', track: preferred };
 		} catch (error) {
-			logger.warn(`[music] Preferred track failed, searching again: ${error.message}`);
+			log.warn(`[music] Preferred track failed, searching again: ${error.message}`);
 		}
 	}
 	const localTrack = findLocalTrack(moodText);
@@ -148,7 +148,7 @@ async function playForMood(moodText) {
 			store.recordMoodTrack(key, localTrack);
 			return { source: 'local', track: localTrack };
 		} catch (error) {
-			logger.warn(`[music] Local playback failed, falling back to YouTube: ${error.message}`);
+			log.warn(`[music] Local playback failed, falling back to YouTube: ${error.message}`);
 		}
 	}
 	await searchYouTube(moodText);

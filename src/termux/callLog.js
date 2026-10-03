@@ -1,12 +1,12 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 
 async function getMissedCalls(limit = 5) {
 	return new Promise((resolve, reject) => {
 		execFile('termux-call-log', ['-l', String(limit)], (error, stdout) => {
 			if (error) {
 				if (error.code === 'ENOENT') {
-					logger.warn('termux-call-log unavailable; missed-call list is empty. Install Termux:API.');
+					log.warn('termux-call-log unavailable; missed-call list is empty. Install Termux:API.');
 					resolve([]);
 					return;
 				}

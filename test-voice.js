@@ -1,19 +1,33 @@
-const { matchCommand } = require('./src/voiceCommands');
+const { getAllCommands, matchCommand } = require('./src/commands/registry');
 
-const phrases = [
-	"What's my next class?",
-	'Read WhatsApp',
-	'Please read my texts',
-	'Who called while I was away?',
-	"I'm away now",
-	"I'm back home",
-	'Text {name} saying the meeting moved to tomorrow',
-	'Tell me a random joke'
-];
+console.log('Testing voice commands against registry examples...');
+const commands = getAllCommands();
+let total = 0;
+let passed = 0;
+const failures = [];
 
-for (const phrase of phrases) {
-	const result = matchCommand(phrase);
-	const params = result.params ? ` ${JSON.stringify(result.params)}` : '';
+for (const cmd of commands) {
+	const examples = cmd.examples || [];
+	for (const example of examples) {
+		total += 1;
+		const res = matchCommand(example);
+		const matches = res.command === cmd.id || (cmd.id === 'ASK_AI' && res.command === 'CHAT');
+		if (matches) {
+			passed += 1;
+			console.log(`  ✓ [${cmd.id}] "${example}" -> ${res.command}`);
+		} else {
+			failures.push({ expected: cmd.id, example, got: res.command });
+			console.error(`  ✗ [${cmd.id}] "${example}" -> got ${res.command}`);
+		}
+	}
+}
 
-	console.log(`${phrase} -> ${result.command}${params}`);
+console.log('----------------------------------------------------');
+console.log(`Summary: ${passed}/${total} examples passed`);
+
+if (failures.length > 0) {
+	console.error(`${failures.length} command examples failed to resolve correctly.`);
+	process.exit(1);
+} else {
+	console.log('All voice command examples passed!');
 }

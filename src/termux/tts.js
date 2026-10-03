@@ -1,5 +1,5 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 const { setSpeaking } = require('../hud/terminalHud');
 
 // BUBU voice: young American lady, on-device, no cloud needed.
@@ -35,7 +35,7 @@ async function speak(text) {
 			}
 
 			if (error.code === 'ENOENT') {
-				logger.warn('termux-tts-speak unavailable; install Termux:API to enable speech.');
+				log.warn('termux-tts-speak unavailable; install Termux:API to enable speech.');
 				resolve();
 				return;
 			}

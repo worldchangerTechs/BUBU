@@ -1,10 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { log } = require('../logger');
+const { getState, on: onAudioState, STATE } = require('../audio');
 
 const FRAME_INTERVAL_MS = 125;
-// Stable, capped canvas: the face is always rendered into this fixed box of
-// braille cells, no matter how big the terminal gets. Points never thin out
-// or redistribute as the screen grows — the cloud stays complete and fixed.
 const MAX_COLUMNS = 60;
 const MAX_FACE_ROWS = 40;
 const BRAILLE_DOTS = [
@@ -21,11 +20,11 @@ let face = null;
 let hudInterval = null;
 let resizeListener = null;
 let frame = 0;
-let speaking = false;
+let audioState = STATE.IDLE;
 let statusText = '';
 let hudDisabled = false;
-// Render grid, computed ONCE at startup (recomputed only on 'resize').
 let grid = null;
+let audioListener = null;
 
 function clamp(value, minimum, maximum) {
 	return Math.max(minimum, Math.min(maximum, value));
@@ -35,7 +34,6 @@ function loadFace() {
 	if (!face) {
 		face = JSON.parse(fs.readFileSync(pointsPath, 'utf8'));
 	}
-
 	return face;
 }
 
@@ -49,45 +47,48 @@ function computeGrid() {
 	const columns = Math.max(1, Math.min(process.stdout.columns || 80, MAX_COLUMNS));
 	const faceRows = Math.max(1, Math.min((process.stdout.rows || 24) - 1, MAX_FACE_ROWS));
 	const terminalWidth = Math.max(1, process.stdout.columns || 80);
-	// Center the fixed box inside a wider terminal.
 	const leftPad = Math.max(0, Math.floor((terminalWidth - columns) / 2));
-	return {
-		columns,
-		faceRows,
-		leftPad,
-		subpixelWidth: columns * 2,
-		subpixelHeight: faceRows * 4
-	};
+	return { columns, faceRows, leftPad, subpixelWidth: columns * 2, subpixelHeight: faceRows * 4 };
+}
+
+function getPulseSpeed(state) {
+	switch (state) {
+		case STATE.SPEAKING: return 0.35;
+		case STATE.LISTENING: return 0.15;
+		case STATE.THINKING: return 0.25;
+		default: return 0.08;
+	}
+}
+
+function getBrightnessBoost(state) {
+	switch (state) {
+		case STATE.SPEAKING: return 0.25;
+		case STATE.LISTENING: return 0.1;
+		case STATE.THINKING: return 0.15;
+		default: return 0;
+	}
 }
 
 function renderFrame() {
 	const currentFace = loadFace();
-	if (!grid) {
-		grid = computeGrid();
-	}
+	if (!grid) grid = computeGrid();
 	const { columns, faceRows, leftPad, subpixelWidth, subpixelHeight } = grid;
-	const pulseSpeed = speaking ? 0.22 : 0.09;
+	const pulseSpeed = getPulseSpeed(audioState);
 	const pulse = (Math.sin(frame * pulseSpeed) + 1) / 2;
-	const brightnessBoost = speaking ? 0.12 : 0;
+	const brightnessBoost = getBrightnessBoost(audioState);
 	const cells = Array.from({ length: faceRows }, () =>
 		Array.from({ length: columns }, () => ({ edge: 0, scatter: 0 }))
 	);
 
 	for (const point of currentFace.points) {
-		if (!pointIsOn(point, pulse + brightnessBoost)) {
-			continue;
-		}
-
+		if (!pointIsOn(point, pulse + brightnessBoost)) continue;
 		const jitter = point.type === 'scatter' ? (Math.random() - 0.5) * 1.2 : 0;
 		const x = Math.round((Number(point.x) / currentFace.width) * (subpixelWidth - 1) + jitter);
 		const y = Math.round((Number(point.y) / currentFace.height) * (subpixelHeight - 1) + jitter);
-		// Bounds check: skip bad-scale points instead of indexing out of range.
 		const cellX = Math.floor(x / 2);
 		const cellY = Math.floor(y / 4);
 		if (x < 0 || y < 0 || x >= subpixelWidth || y >= subpixelHeight
-			|| cellX < 0 || cellY < 0 || cellX >= columns || cellY >= faceRows) {
-			continue;
-		}
+			|| cellX < 0 || cellY < 0 || cellX >= columns || cellY >= faceRows) continue;
 		const cell = cells[cellY][cellX];
 		const [, , mask] = BRAILLE_DOTS.find(([dotX, dotY]) => dotX === x % 2 && dotY === y % 4);
 		const type = point.type === 'scatter' ? 'scatter' : 'edge';
@@ -96,12 +97,8 @@ function renderFrame() {
 
 	const paddedLines = cells.map((row) => {
 		const rendered = row.map((cell) => {
-			if (cell.edge) {
-				return `${CYAN}${String.fromCodePoint(0x2800 + cell.edge)}${RESET}`;
-			}
-			if (cell.scatter) {
-				return `${DIM_CYAN}${String.fromCodePoint(0x2800 + cell.scatter)}${RESET}`;
-			}
+			if (cell.edge) return `${CYAN}${String.fromCodePoint(0x2800 + cell.edge)}${RESET}`;
+			if (cell.scatter) return `${DIM_CYAN}${String.fromCodePoint(0x2800 + cell.scatter)}${RESET}`;
 			return ' ';
 		}).join('');
 		return `${' '.repeat(leftPad)}${rendered}`;
@@ -112,25 +109,22 @@ function renderFrame() {
 }
 
 function startHud() {
-	if (hudInterval || hudDisabled) {
-		return;
-	}
+	if (hudInterval || hudDisabled) return;
 
 	if (!process.stdout.isTTY) {
 		hudDisabled = true;
-		console.warn('[hud] HUD needs a real terminal, not a pipe — run with npm start, not through | tee');
+		log.warn('[hud] HUD needs a real terminal, not a pipe — run with npm start, not through | tee');
 		return;
 	}
 
-	// Compute the render grid ONCE; only a genuine terminal resize rebuilds it.
 	grid = computeGrid();
-	if (resizeListener) {
-		process.stdout.off('resize', resizeListener);
-	}
-	resizeListener = () => {
-		grid = computeGrid();
-	};
+	if (resizeListener) process.stdout.off('resize', resizeListener);
+	resizeListener = () => { grid = computeGrid(); };
 	process.stdout.on('resize', resizeListener);
+
+	// Listen to audio state changes
+	if (audioListener) audioListener();
+	audioListener = onAudioState((state) => { audioState = state; });
 
 	renderFrame();
 	hudInterval = setInterval(renderFrame, FRAME_INTERVAL_MS);
@@ -145,10 +139,16 @@ function stopHud() {
 		process.stdout.off('resize', resizeListener);
 		resizeListener = null;
 	}
+	if (audioListener) {
+		audioListener();
+		audioListener = null;
+	}
+	// Restore cursor
+	process.stdout.write('\x1b[?25h');
 }
 
 function setSpeaking(value) {
-	speaking = Boolean(value);
+	// Deprecated: HUD state is now driven by audio state events
 }
 
 function setStatus(text) {
@@ -158,5 +158,9 @@ function setStatus(text) {
 function isHudActive() {
 	return hudInterval !== null;
 }
+
+// Hide cursor on start, restore on exit
+process.on('SIGINT', () => { stopHud(); process.exit(0); });
+process.on('uncaughtException', () => { stopHud(); });
 
 module.exports = { startHud, stopHud, setSpeaking, setStatus, isHudActive };

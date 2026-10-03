@@ -1,9 +1,9 @@
-const logger = require('./logger');
+const { log } = require('./logger');
 const { classifyMessage } = require('./classifier');
 const { extractEvent } = require('./extractor');
 const store = require('./store');
 const { setAlarm } = require('./termux/alarm');
-const { speakCloned } = require('./termux/cloudTts');
+const { say } = require('./audio');
 const { phrase } = require('./personality');
 const { isRealClassMessage } = require('./classIntentAnalyzer');
 
@@ -27,14 +27,14 @@ function getRecentMessages(limit = MAX_MESSAGES) {
 
 async function handleMessage(chatName, text, senderJid, senderName) {
 	const classification = classifyMessage(chatName, text, senderName);
-	logger.info(`[message] [${chatName}] ${classification}`);
+	log.info(`[message] [${chatName}] ${classification}`);
 
 	if (classification === 'IGNORE') {
 		return;
 	}
 
 	if (classification === 'CLASS') {
-		logger.info(`[whatsapp] [${chatName}] ${text}`);
+		log.info(`[whatsapp] [${chatName}] ${text}`);
 	}
 
 	recordMessage(chatName, text, senderJid);
@@ -54,7 +54,7 @@ async function handleMessage(chatName, text, senderJid, senderName) {
 	}
 
 	if (!(await isRealClassMessage(text))) {
-		logger.info(`[class] Ignored non-class message from [${chatName}]`);
+		log.info(`[class] Ignored non-class message from [${chatName}]`);
 		return;
 	}
 
@@ -76,7 +76,7 @@ async function handleMessage(chatName, text, senderJid, senderName) {
 			alarmSet: true,
 			lastUpdated: Date.now()
 		});
-		await speakCloned(phrase('ALARM_SET', {
+		await say(phrase('ALARM_SET', {
 			title: event.title,
 			time: new Date(event.date).toLocaleString()
 		}));

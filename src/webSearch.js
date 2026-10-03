@@ -1,5 +1,6 @@
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
+const { isOnline } = require('./net');
 
 const SEARCH_ENDPOINT = 'https://html.duckduckgo.com/html/';
 const FETCH_TIMEOUT_MS = 5000;
@@ -16,6 +17,9 @@ function resultUrl(href) {
 }
 
 async function search(query) {
+	if (!isOnline()) {
+		return [];
+	}
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 

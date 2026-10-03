@@ -1,5 +1,5 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 
 async function setAlarm(date, label) {
 	if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
@@ -24,7 +24,7 @@ async function setAlarm(date, label) {
 			}
 
 			if (error.code === 'ENOENT') {
-				logger.warn('am unavailable; Android alarm was skipped. Run this in Termux on Android.');
+				log.warn('am unavailable; Android alarm was skipped. Run this in Termux on Android.');
 				resolve();
 				return;
 			}

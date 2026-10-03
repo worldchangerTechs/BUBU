@@ -1,5 +1,5 @@
 const { execFile } = require('node:child_process');
-const logger = require('../logger');
+const { log } = require('../logger');
 
 function runBinary(binary, args) {
 	return new Promise((resolve, reject) => {
@@ -29,7 +29,7 @@ async function searchGoogle(query) {
 		const reason = error?.code === 'ENOENT'
 			? 'am is unavailable on this device'
 			: error.message;
-		logger.warn(`[launcher] WEB_SEARCH intent failed (${reason}); falling back to browser.`);
+		log.warn(`[launcher] WEB_SEARCH intent failed (${reason}); falling back to browser.`);
 	}
 	const url = `https://www.google.com/search?q=${encodeURIComponent(text)}`;
 	await runBinary('termux-open-url', [url]);

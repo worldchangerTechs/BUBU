@@ -1,5 +1,5 @@
 const { handleVoiceCommand, handleTextCommand } = require('./voiceRouter');
-const logger = require('./logger');
+const { log } = require('./logger');
 
 // Widget tap = one WAKE session: greet once, then keep listening for
 // follow-up commands in the SAME session until "stop"/"that's all"/"done"
@@ -32,7 +32,7 @@ function readStdin() {
 		}
 		await handleVoiceCommand();
 	} catch (error) {
-		logger.error(`[bubu] Voice command failed: ${error.message}`);
+		log.error(`[bubu] Voice command failed: ${error.message}`);
 		process.exitCode = 1;
 	}
 })();
