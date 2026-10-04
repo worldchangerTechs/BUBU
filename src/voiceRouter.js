@@ -1,4 +1,5 @@
 const { say, listenOnce, getState, on: onAudioState } = require('./audio');
+const { log } = require('./logger');
 const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -96,10 +97,11 @@ async function startListeningLoop() {
 				if (String(transcript ?? '').trim()) {
 					await handleCommand(transcript);
 				} else {
+					log.debug('[voiceRouter] Empty STT transcript — retrying immediately without exiting the listening loop.');
 					await new Promise((resolve) => setTimeout(resolve, LISTEN_RETRY_DELAY_MS));
 				}
 			} catch (error) {
-				await say(UNIVERSAL_FALLBACK);
+				log.debug(`[voiceRouter] STT loop recovered from a non-fatal failure: ${error.message}`);
 				await new Promise((resolve) => setTimeout(resolve, LISTEN_RETRY_DELAY_MS));
 			}
 			if (!readListeningState()) {

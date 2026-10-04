@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { execFile, spawn, spawnSync } = require('node:child_process');
+const { execFile, spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -8,13 +8,33 @@ const PROJECT_DIR = path.join(__dirname, '..');
 const PACKAGE_JSON = path.join(PROJECT_DIR, 'package.json');
 
 function resolveBinaryOnPath(cmd) {
-	const executable = process.platform === 'win32' ? 'where' : 'which';
-	const result = spawnSync(executable, [cmd], { shell: false, encoding: 'utf8' });
-	if (result.status === 0) {
-		const output = String(result.stdout || '').trim();
-		const first = output.split(/\r?\n/).find(Boolean);
-		return first || output;
+	const candidates = process.platform === 'win32'
+		? [
+			['where', [cmd]],
+			['where.exe', [cmd]],
+			['cmd', ['/c', 'where', cmd]]
+		]
+		: [
+			['which', [cmd]],
+			['/usr/bin/which', [cmd]],
+			['/data/data/com.termux/files/usr/bin/which', [cmd]],
+			['bash', ['-lc', `command -v ${cmd}`]]
+		];
+
+	for (const [binary, args] of candidates) {
+		try {
+			const result = execFileSync(binary, args, {
+				encoding: 'utf8',
+				stdio: ['ignore', 'pipe', 'pipe']
+			});
+			const output = String(result || '').trim();
+			const first = output.split(/\r?\n/).find(Boolean);
+			if (first) return first;
+		} catch {
+			// try the next probe strategy
+		}
 	}
+
 	return '';
 }
 
@@ -80,21 +100,26 @@ function checkTermuxBinary(cmd) {
 }
 
 function checkDotenvCount() {
-	require('dotenv').config();
+	const envPath = path.join(PROJECT_DIR, '.env');
+	const hasEnv = fs.existsSync(envPath);
+	require('dotenv').config({ path: envPath });
 	let count = 0;
 	for (const key of Object.keys(process.env)) {
 		if (key.startsWith('BUBU_') || key.startsWith('LLAMA_') || key.startsWith('ELEVENLABS_') || key.startsWith('ANTHROPIC_') || key.startsWith('PRIORITY_') || key.startsWith('DEBUG_') || key.startsWith('WAKE_') || key.startsWith('NO_HUD')) {
 			count += 1;
 		}
 	}
+	if (!hasEnv) {
+		return { status: 'WARN', message: 'no .env file at project root; copy .env.example and set LLAMA_MODEL_PATH / LLAMA_SERVER_BIN' };
+	}
 	if (count === 0) {
-		return { status: 'WARN', message: '0 variables loaded' };
+		return { status: 'WARN', message: '0 variables loaded from .env' };
 	}
 	return { status: 'PASS', message: `${count} variables loaded` };
 }
 
 function checkModelFile() {
-	require('dotenv').config();
+	require('dotenv').config({ path: path.join(PROJECT_DIR, '.env') });
 	const modelPath = (process.env.LLAMA_MODEL_PATH || process.env.BUBU_LLM_MODEL || '').replace(/^~/, os.homedir());
 	if (!modelPath) {
 		return { status: 'FAIL', message: 'LLAMA_MODEL_PATH not set' };
@@ -111,7 +136,7 @@ function checkModelFile() {
 }
 
 function checkLlamaServerBin() {
-	require('dotenv').config();
+	require('dotenv').config({ path: path.join(PROJECT_DIR, '.env') });
 	const bin = process.env.LLAMA_SERVER_BIN || 'llama-server';
 	if (bin.includes('/') || bin.includes('\\')) {
 		const abs = bin.replace(/^~/, os.homedir());
@@ -134,7 +159,7 @@ function checkLlamaServerBin() {
 }
 
 function checkLlamaHealth() {
-	require('dotenv').config();
+	require('dotenv').config({ path: path.join(PROJECT_DIR, '.env') });
 	const port = process.env.LLM_PORT || '8090';
 	const url = `http://127.0.0.1:${port}/health`;
 	return new Promise((resolve) => {

@@ -8,6 +8,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const PROJECT_DIR = path.join(__dirname, '..');
+const ENV_PATH = path.join(PROJECT_DIR, '.env');
+require('dotenv').config({ path: ENV_PATH });
+if (!fs.existsSync(ENV_PATH)) {
+	console.log('[bubu-up] No .env file found at project root. Copy .env.example to .env and set LLAMA_MODEL_PATH / LLAMA_SERVER_BIN.');
+}
 const PID_FILE = path.join(PROJECT_DIR, '.bubu-up.pids');
 const LLM_LOG = path.join(PROJECT_DIR, 'bubu-llm.log');
 const PORT = Number(process.env.LLM_PORT || '8090');

@@ -25,6 +25,8 @@ let isProcessingQueue = false;
 let cloudFailures = 0;
 let cloudCooldownUntil = 0;
 let mockListenTranscript = '';
+let sttInProgress = false;
+let consecutiveConnRefusedErrors = 0;
 
 function ensureCacheDir() {
 	try {
@@ -285,63 +287,99 @@ function say(text, opts = {}) {
 }
 
 async function listenOnce() {
-	// Wait until queue is empty and state is not SPEAKING
-	while (sayQueue.length > 0 || currentState === STATE.SPEAKING) {
-		await new Promise((r) => setTimeout(r, 50));
+	if (sttInProgress) {
+		log.debug('[audio] Skipping overlapping STT request.');
+		return '';
 	}
 
-	setState(STATE.LISTENING);
+	sttInProgress = true;
+	try {
+		// Wait until queue is empty and state is not SPEAKING
+		while (sayQueue.length > 0 || currentState === STATE.SPEAKING) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
 
-	if (process.env.BUBU_MOCK_TERMUX === '1') {
-		await new Promise((r) => setTimeout(r, 10));
-		const res = mockListenTranscript;
-		mockListenTranscript = '';
-		setState(STATE.IDLE);
-		return (res || '').trim().toLowerCase();
-	}
+		setState(STATE.LISTENING);
 
-	return new Promise((resolve) => {
-		let completed = false;
-		let timer = null;
-		let graceTimer = null;
-
-		const finalize = (value) => {
-			if (completed) return;
-			completed = true;
-			if (timer) clearTimeout(timer);
-			if (graceTimer) clearTimeout(graceTimer);
+		if (process.env.BUBU_MOCK_TERMUX === '1') {
+			await new Promise((r) => setTimeout(r, 10));
+			const res = mockListenTranscript;
+			mockListenTranscript = '';
+			resetConnRefusedFailureCounter();
 			setState(STATE.IDLE);
-			resolve(value);
-		};
+			return (res || '').trim().toLowerCase();
+		}
 
-		const child = execFile('termux-speech-to-text', [], (error, stdout) => {
-			if (completed) return;
-			if (isIgnorableSttConnectionError(error)) {
-				log.debug('[audio] Ignoring STT connection-refused shutdown from a terminated child process.');
-				return;
-			}
-			finalize(!error && stdout ? String(stdout).trim().toLowerCase() : '');
-		});
+		return await new Promise((resolve) => {
+			let completed = false;
+			let timer = null;
+			let graceTimer = null;
 
-		child.on('error', (error) => {
-			if (completed) return;
-			if (isIgnorableSttConnectionError(error)) {
-				log.debug('[audio] Ignoring STT ECONNREFUSED after graceful shutdown.');
-				return;
-			}
-			finalize('');
-		});
-
-		timer = setTimeout(() => {
-			if (completed) return;
-			try { child.kill('SIGTERM'); } catch {}
-			graceTimer = setTimeout(() => {
+			const finalize = (value) => {
 				if (completed) return;
-				try { child.kill('SIGKILL'); } catch {}
+				completed = true;
+				if (timer) clearTimeout(timer);
+				if (graceTimer) clearTimeout(graceTimer);
+				setState(STATE.IDLE);
+				resolve(value);
+			};
+
+			try {
+				const child = execFile('termux-speech-to-text', [], (error, stdout) => {
+					if (completed) return;
+					if (error && isIgnorableSttConnectionError(error)) {
+						recordConnRefusedFailure();
+						log.debug('[audio] Ignoring STT connection-refused shutdown from a terminated child process.');
+						return finalize('');
+					}
+					if (error) {
+						resetConnRefusedFailureCounter();
+						return finalize('');
+					}
+					const text = String(stdout || '').trim().toLowerCase();
+					if (text) {
+						resetConnRefusedFailureCounter();
+					} else {
+						resetConnRefusedFailureCounter();
+					}
+					return finalize(text);
+				});
+
+				child.on('error', (error) => {
+					if (completed) return;
+					if (isIgnorableSttConnectionError(error)) {
+						recordConnRefusedFailure();
+						log.debug('[audio] Ignoring STT ECONNREFUSED after graceful shutdown.');
+						return finalize('');
+					}
+					resetConnRefusedFailureCounter();
+					finalize('');
+				});
+
+				timer = setTimeout(() => {
+					if (completed) return;
+					try { child.kill('SIGTERM'); } catch {}
+					graceTimer = setTimeout(() => {
+						if (completed) return;
+						try { child.kill('SIGKILL'); } catch {}
+						finalize('');
+					}, 2000);
+				}, 25000);
+			} catch (error) {
+				if (isIgnorableSttConnectionError(error)) {
+					recordConnRefusedFailure();
+				}
 				finalize('');
-			}, 2000);
-		}, 25000);
-	});
+			}
+		});
+	} catch (error) {
+		if (isIgnorableSttConnectionError(error)) {
+			recordConnRefusedFailure();
+		}
+		return '';
+	} finally {
+		sttInProgress = false;
+	}
 }
 
 function isIgnorableSttConnectionError(error) {
@@ -354,6 +392,18 @@ function isIgnorableSttConnectionError(error) {
 		message.includes('econnrefused') ||
 		message.includes('socket hang up')
 	);
+}
+
+function recordConnRefusedFailure() {
+	consecutiveConnRefusedErrors += 1;
+	if (consecutiveConnRefusedErrors >= 3) {
+		log.warn('[audio] Repeated Termux:API handoff failures — this phone\'s background restrictions may be interfering. Consider keeping Termux open during active use.');
+		consecutiveConnRefusedErrors = 3;
+	}
+}
+
+function resetConnRefusedFailureCounter() {
+	consecutiveConnRefusedErrors = 0;
 }
 
 function _setMockListenTranscript(str) {

@@ -24,6 +24,7 @@ let socket = null;
 let pairingRequested = false;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
+let lastReconnectAttemptAt = 0;
 let hasGreeted = false;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const autoRepliedSenders = new Set();
@@ -75,10 +76,17 @@ function clearReconnectTimer() {
 function scheduleReconnect(onMessage, onConnected, phoneNumber) {
 	if (reconnectTimer) return;
 	reconnectAttempts += 1;
-	// Exponential backoff 2, 4, 8, ... capped at 60s with jitter
+	// Exponential backoff 2, 4, 8, ... capped at 60s with jitter, with an enforced 2s minimum gap
+	// between reconnect attempts to avoid the reconnect storm that previously crowded the event loop.
 	const baseDelay = Math.min(2000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY_MS);
 	const jitter = Math.floor(Math.random() * 1000);
-	const delayMs = Math.min(baseDelay + jitter, MAX_RECONNECT_DELAY_MS);
+	let delayMs = Math.min(baseDelay + jitter, MAX_RECONNECT_DELAY_MS);
+	const now = Date.now();
+	const elapsedSinceLastConnectAttempt = now - lastReconnectAttemptAt;
+	if (elapsedSinceLastConnectAttempt < 2000) {
+		delayMs += 2000 - elapsedSinceLastConnectAttempt;
+	}
+	lastReconnectAttemptAt = now + delayMs;
 
 	log.info(`[whatsapp] Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})...`);
 	reconnectTimer = setTimeout(() => {
@@ -135,6 +143,16 @@ async function maybeSendAwayReply(isDirectMessage, senderJid, messageText) {
 	}
 }
 
+function writeGroupsLog(entries) {
+	if (!entries || entries.length === 0) return;
+	const target = path.join(__dirname, '..', 'groups.log');
+	const text = entries.map((entry) => `${entry.subject} (${entry.id})`).join('\n') + '\n';
+	const stream = fs.createWriteStream(target, { flags: 'a' });
+	stream.on('error', () => {});
+	stream.write(text);
+	stream.end();
+}
+
 async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 	clearReconnectTimer();
 	updateWhatsappStatus('CONNECTING');
@@ -167,13 +185,19 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 			// Cache group subjects on open
 			try {
 				const groups = await sock.groupFetchAllParticipating();
+				const discovered = [];
 				for (const [jid, metadata] of Object.entries(groups)) {
 					if (metadata?.subject) {
+						const entry = { id: jid, subject: metadata.subject };
 						if (!groupSubjectCache.has(jid)) {
-							log.info(`[whatsapp] Discovered group: "${metadata.subject}" (${jid})`);
+							discovered.push(entry);
 						}
 						groupSubjectCache.set(jid, metadata.subject);
 					}
+				}
+				if (discovered.length > 0) {
+					log.info(`[whatsapp] Discovered ${discovered.length} groups during startup.`);
+					writeGroupsLog(discovered);
 				}
 			} catch (err) {
 				log.warn(`[whatsapp] Failed to fetch participating groups: ${err.message}`);
@@ -226,13 +250,18 @@ async function connectWhatsApp(onMessage, onConnected, phoneNumber) {
 
 	// Update cached group subjects on groups.upsert and groups.update
 	sock.ev.on('groups.upsert', (groups) => {
+		const discovered = [];
 		for (const g of groups) {
 			if (g?.id && g?.subject) {
 				if (!groupSubjectCache.has(g.id)) {
-					log.info(`[whatsapp] Discovered group: "${g.subject}" (${g.id})`);
+					discovered.push({ id: g.id, subject: g.subject });
 				}
 				groupSubjectCache.set(g.id, g.subject);
 			}
+		}
+		if (discovered.length > 0) {
+			log.info(`[whatsapp] Discovered ${discovered.length} new groups.`);
+			writeGroupsLog(discovered);
 		}
 	});
 

@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('node:path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 // Edit this file to configure the chats Bubu monitors and its away reply.
 const WATCHED_CHATS = [
